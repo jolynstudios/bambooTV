@@ -80,6 +80,14 @@ cd bambooTV
 sudo ./install.sh --printer-ip 192.168.1.50 --with-dlna --radio on
 ```
 
+No git on the machine? Download and unpack it instead:
+
+```bash
+curl -fsSL https://github.com/jolynstudios/bambooTV/archive/refs/heads/main.tar.gz | tar xz
+cd bambooTV-main
+sudo ./install.sh --printer-ip 192.168.1.50 --with-dlna --radio on
+```
+
 The installer asks for the access code (typing it there keeps it out of your
 shell history), then:
 
@@ -189,6 +197,7 @@ For the radio, set `RADIO_URL` in `bambu-tv.env` and uncomment the
 
 ```bash
 cd bambooTV && git pull && sudo ./install.sh   # update, keeps your settings
+                                               # (no git: download again as in step 2)
 sudo ./install.sh --uninstall                  # remove (settings stay)
 sudo ./install.sh --uninstall --purge          # remove everything
 ```
