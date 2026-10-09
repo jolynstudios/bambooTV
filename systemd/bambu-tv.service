@@ -1,0 +1,38 @@
+[Unit]
+Description=bambooTV: 3D printer camera on the local network
+Documentation=https://github.com/jolynstudios/bambooTV
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/bambu-tv/bambu-tv.env
+# radio.yaml only exists while the radio is switched on; go2rtc skips a missing file.
+ExecStart=/opt/bambu-tv/go2rtc -config /opt/bambu-tv/go2rtc.yaml -config /opt/bambu-tv/radio.yaml
+Restart=always
+RestartSec=5
+
+# Runs as a throwaway system user with a read-only view of the system.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

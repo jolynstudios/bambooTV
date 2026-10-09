@@ -1,0 +1,38 @@
+[Unit]
+Description=bambooTV DLNA: the printer camera in TV media browsers
+Documentation=https://github.com/jolynstudios/bambooTV
+Wants=network-online.target bambu-tv.service
+After=network-online.target bambu-tv.service
+
+[Service]
+# Only ports and the advertised address; the access code stays out of this service.
+EnvironmentFile=/etc/bambu-tv/dlna.env
+ExecStart=/usr/bin/python3 -I /opt/bambu-tv/dlna/bambu_tv_dlna.py
+Restart=always
+RestartSec=5
+
+# Same sandbox as bambu-tv: throwaway user, read-only system, no capabilities.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

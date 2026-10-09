@@ -1,0 +1,16 @@
+# bambooTV radio (optional background music).
+#
+# Loaded as a second go2rtc config file: it redefines the x2d stream with a
+# second source, the station's audio, transcoded to AAC by ffmpeg. go2rtc only
+# starts it while someone is watching, and the picture keeps playing when the
+# station is unreachable.
+#
+# Switch: `sudo ./install.sh --radio on|off` (systemd) copies this file to
+# /opt/bambu-tv/radio.yaml or removes it. Docker: see compose.yaml.
+# The station comes from RADIO_URL in bambu-tv.env.
+#
+# Keep the first source identical to the x2d stream in go2rtc.yaml.
+streams:
+  x2d:
+    - rtsps://bblp:${ACCESS_CODE}@${PRINTER_IP}:322/streaming/live/1#backchannel=0
+    - ffmpeg:${RADIO_URL}#audio=aac

@@ -1,0 +1,68 @@
+# bambooTV — go2rtc configuration
+#
+# Pulls the Bambu Lab X2D chamber camera once (RTSP over TLS, port 322) and
+# republishes it on the local network for TVs, browsers and media players.
+#
+# Printer settings come from the environment (see bambu-tv.env.example).
+# go2rtc substitutes ${VAR} / ${VAR:default} and masks substituted values in
+# its logs, so the access code never shows up in `journalctl`.
+
+app:
+  # Load only the modules we serve. Everything else (echo/expr scripting,
+  # WebRTC, HomeKit, cloud tunnels, ...) stays off. exec is required because
+  # the ffmpeg module runs ffmpeg through it; see exec.allow_paths below.
+  modules: [api, ws, rtsp, mp4, hls, mjpeg, ffmpeg, exec]
+
+api:
+  listen: ":${HTTP_PORT:1984}"
+  # The TV page replaces go2rtc's admin UI.
+  static_dir: "${WEB_DIR:/opt/bambu-tv/web}"
+  # Only playback endpoints get registered. Config editing, restart/exit,
+  # stream management and the logs API do not exist on this server.
+  allow_paths:
+    - /                       # TV page (static_dir)
+    - /api/ws                 # MSE over WebSocket (used by the TV page)
+    - /api/stream.m3u8        # HLS for players that only speak HLS
+    - /api/hls/playlist.m3u8
+    - /api/hls/segment.ts     # MPEG-TS variant (default, for apps)
+    - /api/hls/init.mp4       # fMP4 variant (&mp4, used by the TV page)
+    - /api/hls/segment.m4s
+    - /api/stream.mp4         # output only; the DLNA server remuxes it to MPEG-TS
+    - /api/stream.mjpeg       # MJPEG fallback for old browsers
+    - /api/frame.jpeg         # snapshot
+
+exec:
+  allow_paths: [ffmpeg]       # exec may only start ffmpeg
+
+rtsp:
+  listen: ":${RTSP_PORT:8554}"
+  # Optional: require a login for RTSP clients on the network (loopback,
+  # i.e. go2rtc's own ffmpeg, is always exempt). Empty = open on the LAN.
+  username: "${RTSP_USER:}"
+  password: "${RTSP_PASS:}"
+
+ffmpeg:
+  bin: ffmpeg
+
+log:
+  # JSON on purpose: go2rtc's text formatter drops every log line that
+  # contains a masked value (printer IP, access code), errors included.
+  format: json
+
+streams:
+  # rtsps to an IP host: go2rtc dials TLS without certificate verification for
+  # IP targets (the printer uses a self-signed certificate), so PRINTER_IP must
+  # be an IP address, not a hostname (install.sh resolves one). The user is always
+  # "bblp", the password is the printer's LAN access code. backchannel=0 skips
+  # the ONVIF talk-back probe so the printer only sees a single, plain
+  # connection.
+  #
+  # Path /streaming/live/1 verified against a real X2D (fw 01.02.00.00):
+  # DESCRIBE with digest auth answers 200 OK + SDP. Do NOT use the rtspx
+  # pseudo-scheme here: the X2D answers requests whose URI scheme is not
+  # rtsps with a 301 to a non-existent default stream, which breaks go2rtc.
+  x2d: rtsps://bblp:${ACCESS_CODE}@${PRINTER_IP}:322/streaming/live/1#backchannel=0
+
+  # MJPEG copy for browsers without MSE/HLS (720p, 10 fps). ffmpeg only runs
+  # while someone is watching this stream.
+  x2d_mjpeg: ffmpeg:x2d#video=mjpeg#width=1280#raw=-r 10 -q:v 7

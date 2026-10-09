@@ -1,0 +1,11 @@
+# holds the printer access code
+bambu-tv.env
+.env
+
+# local agent tooling state (tokens, logs)
+.contextrelay/
+
+__pycache__/
+*.pyc
+.DS_Store
+.tmp*

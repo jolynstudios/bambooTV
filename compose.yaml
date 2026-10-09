@@ -1,0 +1,39 @@
+# Docker alternative to install.sh (Linux host).
+#   cp bambu-tv.env.example bambu-tv.env   # fill in PRINTER_IP and ACCESS_CODE
+#   docker compose up -d
+#
+# Optional DLNA (the stream shows up under the TV's connected devices):
+#   docker compose --profile dlna up -d
+# Optional radio: set RADIO_URL in bambu-tv.env and uncomment the radio.yaml
+# line below. Changed ports in bambu-tv.env? Add --env-file bambu-tv.env so the
+# DLNA service picks them up too.
+services:
+  bambu-tv:
+    image: alexxit/go2rtc:1.9.14
+    container_name: bambu-tv
+    restart: unless-stopped
+    network_mode: host
+    env_file: bambu-tv.env
+    environment:
+      WEB_DIR: /bambu-tv/web
+    # radio.yaml is only loaded when it is mounted (radio on).
+    command: ["go2rtc", "-config", "/config/go2rtc.yaml", "-config", "/config/radio.yaml"]
+    volumes:
+      - ./config/go2rtc.yaml:/config/go2rtc.yaml:ro
+      # - ./config/radio.yaml:/config/radio.yaml:ro
+      - ./web:/bambu-tv/web:ro
+
+  bambu-tv-dlna:
+    # Same image: it ships python3 and ffmpeg, which is all the DLNA server needs.
+    image: alexxit/go2rtc:1.9.14
+    container_name: bambu-tv-dlna
+    restart: unless-stopped
+    profiles: ["dlna"]
+    network_mode: host
+    command: ["python3", "-I", "/bambu-tv/dlna/bambu_tv_dlna.py"]
+    environment:  # no access code in here
+      HTTP_PORT: ${HTTP_PORT:-1984}
+      DLNA_PORT: ${DLNA_PORT:-49499}
+      DLNA_LAN_IP: ${DLNA_LAN_IP:-}
+    volumes:
+      - ./dlna:/bambu-tv/dlna:ro

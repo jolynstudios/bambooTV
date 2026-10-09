@@ -1,0 +1,1092 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="application-name" content="bambooTV">
+<title>bambooTV</title>
+<link rel="icon" href="icon.svg?v=2">
+<style>
+  /* bambooTV: your printer as a TV channel.
+     Palette from the print itself: carbon chamber, silk-gold filament cooling
+     to copper, bone-white PLA. Layer lines double as scan lines. */
+  @font-face {
+    font-family: "Archivo Expanded";
+    src: url("fonts/archivo-expanded.woff2") format("woff2");
+    font-weight: 500 800;
+    font-display: swap;
+  }
+  :root {
+    color-scheme: dark;
+    --carbon: #0D0E10;
+    --edge: rgba(239, 234, 225, 0.14);
+    --bone: #EFEAE1;
+    --ash: #8E8A83;
+    --silk: #E4B45B;
+    --tally: #E5483B;
+    --sx: 5vw;   /* TV title-safe margins: some sets crop the outer 5% */
+    --sy: 5vh;
+    --display: "Archivo Expanded", "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --text: system-ui, -apple-system, "Samsung One", "SamsungOne", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--carbon);
+    color: var(--bone);
+    font-family: var(--text);
+    font-size: 1.25vw;
+    font-size: clamp(14px, 1.25vw, 30px);
+    line-height: 1.4;
+  }
+  body.live { background: #000; }
+  body.idle { cursor: none; }
+
+  /* ---------------------------------------------------------------- video */
+  #video, .mjpeg {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+    display: none;
+  }
+
+  /* ---------------------------------------------------------------- slate */
+  .slate {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    transition: opacity 0.5s ease, padding 0.4s ease;
+  }
+  body.menu .slate { padding-bottom: 30vh; }  /* keep the message clear of the menu */
+  body.live .slate { opacity: 0; visibility: hidden; transition: opacity 0.5s ease, visibility 0s linear 0.5s; }
+  body.offline.dim .slate { opacity: 0.4; transition: opacity 4s ease; }
+  .slate-inner {
+    width: 72vw;
+    text-align: center;
+    transition: transform 6s ease-in-out;
+  }
+  .slate .mark {
+    display: block;
+    width: 10vw;
+    height: 10.5vw;
+    margin: 0 auto 3.2vh;
+    overflow: hidden;
+  }
+  body.offline .slate .mark { width: 7vw; height: 7.35vw; margin-bottom: 4vh; }
+
+  .eyebrow {
+    margin: 0 0 1.4vh;
+    font-family: var(--mono);
+    font-size: 0.8em;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ash);
+  }
+  .eyebrow:empty, .body:empty, .meta:empty { display: none; }
+  body.offline .eyebrow::before {
+    content: "";
+    display: inline-block;
+    width: 0.55em;
+    height: 0.55em;
+    margin-right: 0.8em;
+    border-radius: 50%;
+    background: var(--tally);
+    vertical-align: 0.08em;
+  }
+  .title {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 650;
+    font-size: 1.7em;
+    line-height: 1.12;
+    letter-spacing: -0.005em;
+  }
+  body.offline .title { font-size: 2.7em; }
+  .body {
+    margin: 2.2vh auto 0;
+    max-width: 34em;
+    font-size: 1.12em;
+    line-height: 1.5;
+    color: rgba(239, 234, 225, 0.82);
+  }
+  .meta {
+    margin: 4.5vh 0 0;
+    font-family: var(--mono);
+    font-size: 0.78em;
+    color: var(--ash);
+    word-break: break-word;
+  }
+  .meta .sep { opacity: 0.5; margin: 0 0.7em; }
+
+  /* ----------------------------------------------------------------- mark */
+  .mark .frame { fill: none; stroke: var(--bone); stroke-width: 5; stroke-linecap: round; }
+  .mark .layer { fill: none; stroke-width: 6.2; stroke-linecap: round; }
+  .mark .l1 { stroke: #B66A3A; }
+  .mark .l2 { stroke: #C8843F; }
+  .mark .l3 { stroke: #D69C49; }
+  .mark .l4 { stroke: #E4B45B; }
+  .mark .filament { fill: none; stroke: var(--silk); stroke-width: 3.6; stroke-linecap: round; }
+  .mark .block { fill: var(--bone); }
+  /* The halo cuts the frame where the hotend crosses it (slate only: carbon background). */
+  .mark .halo { fill: var(--carbon); stroke: var(--carbon); stroke-width: 5; }
+  .mark path.halo { fill: none; stroke-width: 9.6; stroke-linecap: round; }
+  /* No picture: the print has gone cold. */
+  body.offline .slate .frame { stroke: #6B6760; }
+  body.offline .slate .l1 { stroke: #2C2E33; }
+  body.offline .slate .l2 { stroke: #33363B; }
+  body.offline .slate .l3 { stroke: #3B3E44; }
+  body.offline .slate .l4 { stroke: #44474D; }
+  body.offline .slate .filament { stroke: #55585E; }
+  body.offline .slate .block { fill: #6B6760; }
+
+  /* ------------------------------------------------------ live channel bug */
+  .bug {
+    position: fixed;
+    top: var(--sy);
+    left: var(--sx);
+    display: flex;
+    align-items: center;
+    padding: 0.45em 0.95em 0.45em 0.6em;
+    border-radius: 0.7em;
+    background: rgba(13, 14, 16, 0.62);
+    border: 1px solid var(--edge);
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+  }
+  body.live .bug.show { opacity: 1; }
+  .bug .mark { width: 2.3em; height: 2.4em; margin-right: 0.75em; }
+  .tally {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 0.8em;
+    letter-spacing: 0.22em;
+  }
+  .tally i {
+    display: inline-block;
+    width: 0.62em;
+    height: 0.62em;
+    margin-right: 0.6em;
+    border-radius: 50%;
+    background: var(--tally);
+    vertical-align: 0.05em;
+    animation: tally 2.4s ease-in-out infinite;
+  }
+  @keyframes tally { 50% { opacity: 0.45; } }
+  .bug .note { margin-left: 0.8em; font-family: var(--mono); font-size: 0.8em; color: var(--silk); }
+
+  /* --------------------------------------------------------------- panel */
+  .panel {
+    position: fixed;
+    left: var(--sx);
+    bottom: var(--sy);
+    max-width: 66vw;
+    padding: 1.1em 1.35em 1.2em;
+    border-radius: 0.9em;
+    background: rgba(13, 14, 16, 0.88);
+    border: 1px solid var(--edge);
+  }
+  .panel .row { display: flex; align-items: center; flex-wrap: wrap; }
+  .panel .row + .row { margin-top: 1em; padding-top: 1em; border-top: 1px solid var(--edge); align-items: flex-start; }
+  .panel .label {
+    width: 9em;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 0.72em;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ash);
+  }
+  .panel .row + .row .label { padding-top: 0.45em; }
+  .modes a {
+    display: inline-block;
+    margin: 0.15em 0.45em 0.15em 0;
+    padding: 0.32em 0.95em;
+    border-radius: 0.5em;
+    border: 1px solid var(--edge);
+    color: var(--bone);
+    text-decoration: none;
+  }
+  .modes button {
+    margin: 0.15em 0.45em 0.15em 0;
+    padding: 0.32em 0.95em;
+    border-radius: 0.5em;
+    border: 1px solid var(--edge);
+    background: none;
+    color: var(--bone);
+    font: inherit;
+    cursor: pointer;
+  }
+  .modes a.active, .modes button.active { background: var(--silk); border-color: var(--silk); color: var(--carbon); font-weight: 600; }
+  .modes a:focus, .modes a:hover, .modes button:focus, .modes button:hover { outline: 3px solid var(--silk); outline-offset: 2px; }
+  .now { margin-left: 0.6em; font-family: var(--mono); font-size: 0.72em; color: var(--ash); }
+  .apps { flex: 1; min-width: 0; }
+  .app { display: flex; align-items: baseline; margin: 0.2em 0; }
+  .app .name { width: 12em; flex: none; color: var(--ash); font-size: 0.86em; }
+  .app code { font-family: var(--mono); font-size: 0.82em; color: var(--bone); word-break: break-all; }
+
+  [hidden] { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tally i { animation: none; }
+    .slate-inner { transition: none; }
+  }
+</style>
+</head>
+<body class="connecting">
+<video id="video" muted autoplay playsinline disablepictureinpicture></video>
+<img id="mjpeg" class="mjpeg" alt="">
+
+<main id="slate" class="slate">
+  <div id="slate-inner" class="slate-inner">
+    <svg class="mark" viewBox="0 0 80 84" aria-hidden="true">
+      <rect class="frame" x="4" y="16" width="72" height="52" rx="12"/>
+      <path class="frame" d="M28 78H52"/>
+      <g id="layers">
+        <path class="layer l1" d="M66 58.5H14"/>
+        <path class="layer l2" d="M14 49H66"/>
+        <path class="layer l3" d="M66 39.5H14"/>
+        <path class="layer l4" d="M14 30H42"/>
+      </g>
+      <g id="head">
+        <path class="halo" d="M42 -80V11"/>
+        <rect class="halo" x="33" y="10" width="18" height="10" rx="2.5"/>
+        <path class="filament" d="M42 -80V11"/>
+        <rect class="block" x="33" y="10" width="18" height="10" rx="2.5"/>
+        <path class="block" d="M36.5 20h11l-3.6 6h-3.8z"/>
+      </g>
+    </svg>
+    <p id="eyebrow" class="eyebrow"></p>
+    <h1 id="title" class="title" aria-live="polite"></h1>
+    <p id="body" class="body"></p>
+    <p id="meta" class="meta"></p>
+  </div>
+</main>
+
+<div id="bug" class="bug" aria-hidden="true">
+  <svg class="mark" viewBox="0 0 80 84">
+    <defs><mask id="bug-gap"><rect width="80" height="84" fill="#fff"/><rect x="29.5" y="7" width="25" height="16" rx="4" fill="#000"/></mask></defs>
+    <rect class="frame" x="4" y="16" width="72" height="52" rx="12" mask="url(#bug-gap)"/>
+    <path class="frame" d="M28 78H52"/>
+    <path class="layer l1" d="M14 58.5H66"/>
+    <path class="layer l2" d="M14 49H66"/>
+    <path class="layer l3" d="M14 39.5H66"/>
+    <path class="layer l4" d="M14 30H42"/>
+    <path class="filament" d="M42 2V11"/>
+    <rect class="block" x="33" y="10" width="18" height="10" rx="2.5"/>
+    <path class="block" d="M36.5 20h11l-3.6 6h-3.8z"/>
+  </svg>
+  <span class="tally"><i></i><span id="bug-label">LIVE</span></span>
+  <span id="bug-note" class="note"></span>
+</div>
+
+<nav id="panel" class="panel" hidden>
+  <div class="row"><span id="playback-label" class="label"></span><span id="modes" class="modes"></span><span id="now" class="now"></span></div>
+  <div id="sound-row" class="row" hidden><span id="sound-label" class="label"></span><span class="modes"><button id="sound-btn" type="button"></button></span><span id="sound-hint" class="now"></span></div>
+  <div class="row"><span id="apps-label" class="label"></span><div id="apps" class="apps"></div></div>
+</nav>
+
+<noscript><p style="padding:2em">This page needs JavaScript. Use the MJPEG link instead: <a href="api/stream.mjpeg?src=x2d_mjpeg">api/stream.mjpeg?src=x2d_mjpeg</a></p></noscript>
+
+<script>
+/*
+ * bambooTV player: shows the go2rtc stream full screen on a TV browser.
+ *
+ * Playback modes, best first:
+ *   mse   - fragmented MP4 over a WebSocket into MediaSource (low latency)
+ *   hls   - native HLS, for browsers without MediaSource
+ *   mjpeg - multipart JPEG in an <img>, works everywhere (transcoded by ffmpeg)
+ * The page picks the best mode the browser supports, falls back only when the
+ * browser cannot decode the stream, and otherwise keeps retrying the same mode
+ * (printer off, network hiccup, printer reboot).
+ *
+ * Language: English by default, Dutch via ?lang=nl (or the browser setting).
+ *
+ * The MSE handling follows go2rtc's video-rtc.js (MIT, Copyright (c) 2022 Alexey
+ * Khit, github.com/AlexxIT/go2rtc). Plain ES2015, no modules: older
+ * Samsung/Tizen browsers must run this.
+ */
+(function () {
+  'use strict';
+
+  var START_TIMEOUT = 20000;          // first picture must arrive within 20 s
+  var STALL_TIMEOUT = 12000;          // picture may not freeze longer than 12 s
+  var MJPEG_REFRESH = 15 * 60 * 1000; // reopen the MJPEG connection every 15 min
+  var RETRY_DELAYS = [2, 5, 10, 20, 30];
+  var CODECS = ['avc1.640029', 'avc1.64002A', 'avc1.640033', 'hvc1.1.6.L153.B0', 'mp4a.40.2', 'mp4a.40.5'];
+  var ALL_MODES = ['mse', 'hls', 'mjpeg'];
+
+  var params = new URLSearchParams(location.search);
+  var SRC = params.get('src') || 'x2d';
+  var MJPEG_SRC = params.get('mjpeg') || SRC + '_mjpeg';
+  var forced = ALL_MODES.indexOf(params.get('mode')) >= 0 ? params.get('mode') : '';
+  var LANG = params.get('lang') ||
+    ((navigator.language || '').toLowerCase().indexOf('nl') === 0 ? 'nl' : 'en');
+  document.documentElement.lang = LANG;
+
+  var STR = {
+    en: {
+      connect: 'Connecting to the printer',
+      reconnect: 'Reconnecting',
+      live: 'Live',
+      tryingIn: function (n) { return 'Trying again in ' + n + ' s'; },
+      tryingNow: 'Trying again now',
+      noPictureEyebrow: 'No picture from the printer',
+      noPicture: 'No picture received',
+      noPictureIn: function (n, m) { return 'No picture within ' + n + ' s (' + m + ')'; },
+      stalled: 'Picture stalled',
+      stalledFor: function (n, m) { return 'No new picture for ' + n + ' s (' + m + ')'; },
+      playFailed: 'Playback failed',
+      tvFormat: 'This TV cannot play this video format',
+      formatUnsupported: 'Video format not supported',
+      printerUnreachable: 'Printer not reachable',
+      wsLost: 'Connection to bambooTV lost',
+      wsDetail: 'WebSocket closed',
+      mjpegError: 'MJPEG stream returned an error',
+      hints: {
+        refused: ['Turn on LAN Only Liveview',
+          'On the printer, open Settings → General and switch on LAN Only Liveview. The picture comes back by itself.'],
+        timeout: ['The printer isn’t answering',
+          'Check that it’s switched on and connected to the network, and that its IP address in the bambooTV settings is still right.'],
+        auth: ['The printer rejected the access code',
+          'Copy the access code from the printer (Settings → Network) into the bambooTV settings.'],
+        stream: ['Unknown stream', 'This page asks for “{src}”, which isn’t in the bambooTV configuration.'],
+        format: ['This TV can’t play the stream', 'Move the cursor, open the menu and choose MJPEG under Playback.'],
+        server: ['bambooTV isn’t responding', 'The bambooTV service on your computer may have stopped. Restart it with sudo systemctl restart bambu-tv.'],
+        generic: ['No video yet',
+          'bambooTV can’t get a picture from the printer. Is the printer on, and is LAN Only Liveview switched on?']
+      },
+      playback: 'Playback',
+      auto: 'Auto',
+      now: function (m) { return 'now ' + m; },
+      apps: 'Other apps',
+      appRtsp: 'VLC, Home Assistant',
+      appHls: 'IPTV apps, Safari',
+      appSnap: 'Snapshot',
+      sound: 'Sound',
+      soundOn: 'On',
+      soundOff: 'Off',
+      pressForSound: 'press OK for sound'
+    },
+    nl: {
+      connect: 'Verbinden met de printer',
+      reconnect: 'Opnieuw verbinden',
+      live: 'Live',
+      tryingIn: function (n) { return 'Opnieuw proberen over ' + n + ' s'; },
+      tryingNow: 'Nu opnieuw proberen',
+      noPictureEyebrow: 'Geen beeld van de printer',
+      noPicture: 'Geen beeld ontvangen',
+      noPictureIn: function (n, m) { return 'Binnen ' + n + ' s geen beeld (' + m + ')'; },
+      stalled: 'Beeld staat stil',
+      stalledFor: function (n, m) { return n + ' s geen nieuw beeld (' + m + ')'; },
+      playFailed: 'Afspelen mislukt',
+      tvFormat: 'Deze tv kan dit videoformaat niet afspelen',
+      formatUnsupported: 'Videoformaat niet ondersteund',
+      printerUnreachable: 'Printer niet bereikbaar',
+      wsLost: 'Verbinding met bambooTV verbroken',
+      wsDetail: 'WebSocket gesloten',
+      mjpegError: 'MJPEG-stream gaf een fout',
+      hints: {
+        refused: ['Zet LAN Only Liveview aan',
+          'Open op de printer Instellingen → Algemeen en zet LAN Only Liveview aan. Het beeld komt dan vanzelf terug.'],
+        timeout: ['De printer antwoordt niet',
+          'Controleer of hij aan staat en met het netwerk verbonden is, en of zijn IP-adres in de bambooTV-instellingen nog klopt.'],
+        auth: ['De printer weigert de toegangscode',
+          'Neem de toegangscode van de printer (Instellingen → Netwerk) over in de bambooTV-instellingen.'],
+        stream: ['Onbekende stream', 'Deze pagina vraagt om “{src}”, maar die staat niet in de bambooTV-configuratie.'],
+        format: ['Deze tv kan de stream niet afspelen', 'Beweeg de cursor, open het menu en kies MJPEG bij Weergave.'],
+        server: ['bambooTV reageert niet', 'De bambooTV-dienst op je computer is misschien gestopt. Herstart hem met sudo systemctl restart bambu-tv.'],
+        generic: ['Nog geen beeld',
+          'bambooTV krijgt geen beeld van de printer. Staat de printer aan, en staat LAN Only Liveview aan?']
+      },
+      playback: 'Weergave',
+      auto: 'Automatisch',
+      now: function (m) { return 'nu ' + m; },
+      apps: 'Andere apps',
+      appRtsp: 'VLC, Home Assistant',
+      appHls: 'IPTV-apps, Safari',
+      appSnap: 'Momentopname',
+      sound: 'Geluid',
+      soundOn: 'Aan',
+      soundOff: 'Uit',
+      pressForSound: 'druk op OK voor geluid'
+    }
+  };
+  var L = STR[LANG] || STR.en;
+  function T(key) { return L[key]; }
+
+  var video = document.getElementById('video');
+  var img = document.getElementById('mjpeg');
+  var panelEl = document.getElementById('panel');
+  var bugEl = document.getElementById('bug');
+
+  var MS = window.MediaSource || window.WebKitMediaSource;
+
+  function mseCodecs() {
+    if (!MS || !MS.isTypeSupported) return '';
+    return CODECS.filter(function (c) {
+      return MS.isTypeSupported('video/mp4; codecs="' + c + '"');
+    }).join(',');
+  }
+
+  var modes = forced ? [forced] : ALL_MODES.filter(function (m) {
+    if (m === 'mse') return !!mseCodecs();
+    if (m === 'hls') return !!video.canPlayType('application/vnd.apple.mpegurl');
+    return true;
+  });
+  var modeIndex = 0;
+
+  function mode() { return modes[modeIndex]; }
+
+  function apiURL(path) { return new URL(path, location.href).href; }
+
+  function wsURL(path) { return apiURL(path).replace(/^http/, 'ws'); }
+
+  // ---------------------------------------------------------------- session
+
+  var current = null;   // token of the running attempt
+  var session = null;   // {stop: function} of the running attempt
+  var retryTimer = 0;
+  var failures = 0;     // consecutive failed attempts
+  var startedAt = 0;
+  var lastFrameAt = 0;  // 0 until the attempt shows its first picture
+  var lastProgress = -1;
+  var mediaArrived = false; // the server delivers video for this attempt
+  var everPlayed = {};  // mode -> true once that mode has shown a picture
+
+  // When video arrives but the browser never shows it, the browser can't play
+  // this mode. When no video arrives, the printer/server is the problem.
+  function browserProblem() { return mediaArrived && !everPlayed[mode()]; }
+
+  function start() {
+    clearTimeout(retryTimer);
+    retryTimer = 0;
+    stopSession();
+
+    startedAt = Date.now();
+    lastFrameAt = 0;
+    lastProgress = -1;
+    mediaArrived = false;
+    showAttempt();
+
+    var token = {};
+    current = token;
+    session = PLAYERS[mode()]({
+      media: function () { if (current === token) mediaArrived = true; },
+      frame: function () { if (current === token) onFrame(); },
+      fail: function (msg, detail, incompatible) {
+        if (current === token) onFail(msg, detail, incompatible);
+      }
+    });
+  }
+
+  function stopSession() {
+    current = null;
+    if (session) {
+      var s = session;
+      session = null;
+      s.stop();
+    }
+  }
+
+  function onFrame() {
+    lastFrameAt = Date.now();
+    if (!everPlayed[mode()] || failures || view !== 'live') {
+      everPlayed[mode()] = true;
+      failures = 0;
+      showLive();
+    }
+  }
+
+  function onFail(msg, detail, incompatible) {
+    stopSession();
+    if (incompatible && modeIndex < modes.length - 1) {
+      // This browser cannot play the stream this way: try the next mode.
+      modeIndex++;
+      failures = 0;
+      start();
+      return;
+    }
+    failures++;
+    var delay = RETRY_DELAYS[Math.min(failures, RETRY_DELAYS.length) - 1];
+    if (failures >= 2) showOffline(msg, detail); else showReconnect();
+    countdown(delay, failures >= 2 ? detail : '');
+    retryTimer = setTimeout(start, delay * 1000);
+  }
+
+  // Decoded-frame counter (our own live-edge seeks can't fake it), or -1.
+  function decodedFrames() {
+    if (video.getVideoPlaybackQuality) return video.getVideoPlaybackQuality().totalVideoFrames;
+    if (typeof video.webkitDecodedFrameCount === 'number') return video.webkitDecodedFrameCount;
+    return -1;
+  }
+
+  // Detect progress for <video> modes and enforce the start/stall timeouts.
+  setInterval(function () {
+    if (!current) return;
+    var m = mode();
+    if (m !== 'mjpeg') {
+      if (video.paused) tryPlay();
+      if (!hasAudio && (video.mozHasAudio || video.webkitAudioDecodedByteCount > 0 ||
+          (video.audioTracks && video.audioTracks.length > 0))) audioFound();
+      var frames = decodedFrames();
+      var progress = frames >= 0 ? frames : video.currentTime;
+      // The first tick only takes a baseline; a counter reset just re-baselines.
+      if (lastProgress >= 0 && progress > lastProgress && video.readyState >= 2) onFrame();
+      lastProgress = progress;
+    } else if (lastFrameAt) {
+      return; // an <img> cannot report new frames; MJPEG_REFRESH covers stalls
+    }
+    var now = Date.now();
+    if (!lastFrameAt && now - startedAt > START_TIMEOUT) {
+      onFail(T('noPicture'), L.noPictureIn(START_TIMEOUT / 1000, m.toUpperCase()),
+        browserProblem());
+    } else if (lastFrameAt && now - lastFrameAt > STALL_TIMEOUT) {
+      onFail(T('stalled'), L.stalledFor(STALL_TIMEOUT / 1000, m.toUpperCase()));
+    }
+  }, 1000);
+
+  // ---------------------------------------------------------------- players
+
+  function showVideo() {
+    img.style.display = 'none';
+    video.style.display = 'block';
+  }
+
+  function resetVideo() {
+    video.removeAttribute('src');
+    try { video.load(); } catch (e) { /* nothing to abort */ }
+  }
+
+  function tryPlay() {
+    var p = video.play();
+    if (p && p.catch) p.catch(function () { /* retried by the watchdog */ });
+  }
+
+  // Calls back with true when go2rtc can deliver the stream (it answers
+  // with an HLS playlist only after connecting to the printer).
+  function probeServer(callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', apiURL('api/stream.m3u8?src=' + encodeURIComponent(SRC)));
+    xhr.timeout = 15000;
+    xhr.onload = function () { callback(xhr.status === 200 && xhr.responseText.indexOf('#EXTM3U') === 0); };
+    xhr.onerror = xhr.ontimeout = function () { callback(false); };
+    xhr.send();
+  }
+
+  function concat(chunks) {
+    var size = 0, i;
+    for (i = 0; i < chunks.length; i++) size += chunks[i].byteLength;
+    var out = new Uint8Array(size), offset = 0;
+    for (i = 0; i < chunks.length; i++) {
+      out.set(chunks[i], offset);
+      offset += chunks[i].byteLength;
+    }
+    return out;
+  }
+
+  var PLAYERS = {
+    mse: function (api) {
+      showVideo();
+      var ms = new MS();
+      var ws = null, sb = null, queue = [];
+      var objectURL = URL.createObjectURL(ms);
+
+      function pump() {
+        if (!sb || sb.updating || !queue.length) return;
+        var data = queue.length === 1 ? queue[0] : concat(queue);
+        queue = [];
+        try {
+          sb.appendBuffer(data);
+        } catch (e) {
+          api.fail(T('playFailed'), e.name + ': ' + e.message);
+        }
+      }
+
+      function onUpdateEnd() {
+        if (ms.readyState !== 'open') return; // stopped meanwhile
+        var b = sb.buffered;
+        if (b.length) {
+          var start = b.start(0), end = b.end(b.length - 1);
+          // Stay at the live edge: jump ahead when we fall behind.
+          if (video.currentTime < start || end - video.currentTime > 3) {
+            video.currentTime = Math.max(start, end - 0.5);
+          }
+          // Keep at most ~30 s of video in memory.
+          if (video.currentTime - start > 30) {
+            sb.remove(start, video.currentTime - 10);
+            return; // the next updateend pumps the queue
+          }
+        }
+        pump();
+      }
+
+      function onMessage(ev) {
+        if (typeof ev.data !== 'string') {
+          if (sb) api.media(); // actual video, not just the codec handshake
+          queue.push(new Uint8Array(ev.data));
+          pump();
+          return;
+        }
+        var msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (msg.type === 'mse') {
+          try {
+            sb = ms.addSourceBuffer(msg.value);
+          } catch (e) {
+            api.fail(T('tvFormat'), msg.value, true);
+            return;
+          }
+          sb.mode = 'segments';
+          sb.addEventListener('updateend', onUpdateEnd);
+          if (msg.value.indexOf('mp4a') >= 0) audioFound();
+        } else if (msg.type === 'error') {
+          var codecs = msg.value.indexOf('codecs not matched') >= 0;
+          api.fail(codecs ? T('formatUnsupported') : T('printerUnreachable'), msg.value, codecs);
+        }
+      }
+
+      function onSourceOpen() {
+        ms.removeEventListener('sourceopen', onSourceOpen);
+        ws = new WebSocket(wsURL('api/ws?src=' + encodeURIComponent(SRC)));
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = function () { ws.send(JSON.stringify({type: 'mse', value: mseCodecs()})); };
+        ws.onmessage = onMessage;
+        ws.onclose = function () { api.fail(T('wsLost'), L.wsDetail); };
+      }
+
+      function onError() {
+        if (video.src !== objectURL) return;
+        var code = video.error ? video.error.code : 0;
+        // 3 = decode error, 4 = format not supported
+        api.fail(T('playFailed'), 'MediaError ' + code, (code === 3 || code === 4) && browserProblem());
+      }
+
+      ms.addEventListener('sourceopen', onSourceOpen);
+      video.addEventListener('error', onError);
+      video.src = objectURL;
+      tryPlay();
+
+      return {
+        stop: function () {
+          ms.removeEventListener('sourceopen', onSourceOpen);
+          video.removeEventListener('error', onError);
+          if (ws) {
+            ws.onclose = ws.onmessage = null;
+            ws.close();
+          }
+          resetVideo();
+          URL.revokeObjectURL(objectURL);
+        }
+      };
+    },
+
+    hls: function (api) {
+      showVideo();
+      // fMP4 segments (&mp4) carry the codec setup in init.mp4, so playback can
+      // start on any segment.
+      var url = apiURL('api/stream.m3u8?src=' + encodeURIComponent(SRC) + '&mp4&t=' + Date.now());
+
+      function onMetadata() { api.media(); }
+
+      function onError() {
+        if (video.src !== url) return;
+        var code = video.error ? video.error.code : 0;
+        var detail = 'HLS MediaError ' + code + (video.error && video.error.message ? ' (' + video.error.message + ')' : '');
+        if (mediaArrived) {
+          api.fail(T('playFailed'), detail, browserProblem());
+          return;
+        }
+        // Failed before any metadata: ask the server whether it has video.
+        // If it does, this browser just can't play it.
+        probeServer(function (serverOK) {
+          if (serverOK) api.media();
+          api.fail(serverOK ? T('playFailed') : T('printerUnreachable'), detail, serverOK && browserProblem());
+        });
+      }
+
+      video.addEventListener('loadedmetadata', onMetadata);
+      video.addEventListener('error', onError);
+      video.src = url;
+      tryPlay();
+
+      return {
+        stop: function () {
+          video.removeEventListener('loadedmetadata', onMetadata);
+          video.removeEventListener('error', onError);
+          resetVideo();
+        }
+      };
+    },
+
+    mjpeg: function (api) {
+      video.style.display = 'none';
+      resetVideo();
+
+      function url() {
+        return apiURL('api/stream.mjpeg?src=' + encodeURIComponent(MJPEG_SRC) + '&t=' + Date.now());
+      }
+
+      function bind(el) {
+        el.onload = function () { api.frame(); };
+        el.onerror = function () { api.fail(T('printerUnreachable'), L.mjpegError); };
+      }
+
+      function close(el) {
+        el.onload = el.onerror = null;
+        el.src = 'data:,'; // aborts the multipart request
+      }
+
+      // Swap in a fresh connection without a black frame in between.
+      var pending = null;
+      var refresh = setInterval(function () {
+        if (pending) close(pending);
+        var next = pending = new Image();
+        next.className = 'mjpeg';
+        next.onload = function () {
+          pending = null;
+          var old = img;
+          close(old);
+          next.style.display = 'block';
+          old.parentNode.replaceChild(next, old);
+          next.id = 'mjpeg';
+          img = next;
+          bind(img);
+        };
+        next.onerror = function () {
+          pending = null;
+          next.onload = next.onerror = null;
+        };
+        next.src = url();
+      }, MJPEG_REFRESH);
+
+      bind(img);
+      img.style.display = 'block';
+      img.src = url();
+
+      return {
+        stop: function () {
+          clearInterval(refresh);
+          if (pending) close(pending);
+          pending = null;
+          close(img);
+          img.style.display = 'none';
+        }
+      };
+    }
+  };
+
+  // ------------------------------------------------------------------ mark
+
+  // The logo prints itself while connecting: four layers, bottom up, the
+  // hotend zig-zagging like a real perimeter pass.
+  var markLayers = [];
+  ['l1', 'l2', 'l3', 'l4'].forEach(function (cls) {
+    var el = document.querySelector('#layers .' + cls);
+    var m = el.getAttribute('d').match(/M([\d.]+) ([\d.]+)H([\d.]+)/);
+    markLayers.push({el: el, from: +m[1], y: +m[2], to: +m[3], len: Math.abs(m[3] - m[1])});
+  });
+  var head = document.getElementById('head');
+  var layersGroup = document.getElementById('layers');
+  var MM_PER_MS = 52 / 700, HOP = 160, HOLD = 1700, HOME = 600;
+  var reduceMotion = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var markRAF = 0, markT0 = 0;
+
+  function drawLayer(l, p) {
+    l.el.style.strokeDasharray = l.len + ' ' + (l.len + 24);
+    l.el.style.strokeDashoffset = String(l.len * (1 - p));
+    l.el.style.visibility = p > 0 ? 'visible' : 'hidden';
+  }
+
+  function placeHead(x, y) {
+    head.setAttribute('transform', 'translate(' + (x - 42).toFixed(2) + ' ' + (y - 30).toFixed(2) + ')');
+  }
+
+  function drawMark(t) {
+    var first = markLayers[0], last = markLayers[markLayers.length - 1];
+    var x = first.from, y = first.y;
+    for (var i = 0; i < markLayers.length; i++) {
+      var l = markLayers[i], d = l.len / MM_PER_MS;
+      var p = Math.max(0, Math.min(1, t / d));
+      drawLayer(l, p);
+      if (t >= 0) { x = l.from + (l.to - l.from) * p; y = l.y; }
+      t -= d;
+      if (i < markLayers.length - 1) {
+        if (t > 0 && t < HOP) y = l.y + (markLayers[i + 1].y - l.y) * (t / HOP);
+        t -= HOP;
+      }
+    }
+    var fade = 1;
+    if (t > HOLD) {  // travel home while the print fades, then start over
+      var k = Math.min(1, (t - HOLD) / HOME);
+      fade = 1 - k;
+      x = last.to + (first.from - last.to) * k;
+      y = last.y + (first.y - last.y) * k;
+    }
+    layersGroup.style.opacity = fade;
+    placeHead(x, y);
+    return t < HOLD + HOME;
+  }
+
+  function markLoop(now) {
+    if (!markT0) markT0 = now;
+    if (!drawMark(now - markT0)) markT0 = now;
+    markRAF = requestAnimationFrame(markLoop);
+  }
+
+  function markStatic() {
+    cancelAnimationFrame(markRAF);
+    markRAF = 0;
+    markT0 = 0;
+    markLayers.forEach(function (l) { drawLayer(l, 1); });
+    layersGroup.style.opacity = 1;
+    placeHead(42, 30);
+  }
+
+  function markAnimate() {
+    if (reduceMotion || markRAF || !window.requestAnimationFrame) {
+      if (!markRAF) markStatic();
+      return;
+    }
+    markRAF = requestAnimationFrame(markLoop);
+  }
+
+  // --------------------------------------------------------------------- UI
+
+  var view = '';
+  var countdownTimer = 0, driftTimer = 0, dimTimer = 0, bugTimer = 0;
+  var slateInner = document.getElementById('slate-inner');
+
+  function text(id, value) { document.getElementById(id).textContent = value || ''; }
+
+  function setView(next) {
+    if (view === next) return;
+    view = next;
+    var b = document.body.classList;
+    b.remove('connecting', 'offline', 'live', 'dim');
+    b.add(next);
+    if (next === 'connecting') markAnimate(); else markStatic();
+    clearInterval(driftTimer);
+    clearTimeout(dimTimer);
+    slateInner.style.transform = '';
+    if (next === 'offline') protectScreen();
+  }
+
+  // OLED care: the offline slate can stay up for hours, so it drifts slowly
+  // and dims after ten minutes.
+  function protectScreen() {
+    driftTimer = setInterval(function () {
+      var dx = (Math.random() * 2.4 - 1.2).toFixed(2), dy = (Math.random() * 3 - 1.5).toFixed(2);
+      slateInner.style.transform = 'translate(' + dx + 'vw, ' + dy + 'vh)';
+    }, 60000);
+    dimTimer = setTimeout(function () { document.body.classList.add('dim'); }, 10 * 60 * 1000);
+  }
+
+  function showAttempt() {
+    if (view === 'offline') {  // keep the explanation up while retrying
+      text('meta', T('tryingNow'));
+      return;
+    }
+    if (view === 'live') return; // a reconnect after a drop shows its own slate
+    setView('connecting');
+    text('eyebrow', '');
+    text('title', failures ? T('reconnect') : T('connect'));
+    text('body', '');
+    text('meta', '');
+  }
+
+  function showReconnect() {
+    setView('connecting');
+    text('eyebrow', '');
+    text('title', T('reconnect'));
+    text('body', '');
+  }
+
+  function cause(msg, detail) {
+    var d = ((detail || '') + ' ' + (msg || '')).toLowerCase();
+    if (d.indexOf('connection refused') >= 0) return 'refused';
+    if (d.indexOf('user/pass') >= 0 || d.indexOf('401') >= 0) return 'auth';
+    if (d.indexOf('timeout') >= 0 || d.indexOf('no route') >= 0 || d.indexOf('unreachable') >= 0 ||
+        d.indexOf('no such host') >= 0) return 'timeout';
+    if (d.indexOf('stream not found') >= 0) return 'stream';
+    if (d.indexOf('codecs not matched') >= 0 || msg === T('tvFormat')) return 'format';
+    if (msg === T('wsLost')) return 'server';
+    return 'generic';
+  }
+
+  function showOffline(msg, detail) {
+    setView('offline');
+    var hint = L.hints[cause(msg, detail)];
+    text('eyebrow', T('noPictureEyebrow'));
+    text('title', hint[0]);
+    text('body', hint[1].replace('{src}', SRC));
+  }
+
+  // "Trying again in 12 s · connect: connection refused"
+  function countdown(seconds, detail) {
+    clearInterval(countdownTimer);
+    var until = Date.now() + seconds * 1000;
+    var clean = (detail || '').replace(/^(mse|hls|mjpeg|mp4): /, '').replace(/^streams: /, '');
+    function render() {
+      var left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      var meta = document.getElementById('meta');
+      meta.textContent = left ? L.tryingIn(left) : T('tryingNow');
+      if (clean) {
+        var sep = document.createElement('span');
+        sep.className = 'sep';
+        sep.textContent = '·';
+        meta.appendChild(sep);
+        meta.appendChild(document.createTextNode(clean));
+      }
+      if (!left) clearInterval(countdownTimer);
+    }
+    render();
+    countdownTimer = setInterval(render, 1000);
+  }
+
+  function showLive() {
+    clearInterval(countdownTimer);
+    setView('live');
+    flashBug();
+  }
+
+  function flashBug() {
+    bugEl.classList.add('show');
+    clearTimeout(bugTimer);
+    bugTimer = setTimeout(function () { bugEl.classList.remove('show'); }, 5000);
+  }
+
+  function buildPanel() {
+    text('playback-label', T('playback'));
+    text('sound-label', T('sound'));
+    text('apps-label', T('apps'));
+    text('bug-label', T('live').toUpperCase());
+    var row = document.getElementById('modes');
+    [['', T('auto')]].concat(ALL_MODES.map(function (m) { return [m, m.toUpperCase()]; }))
+      .forEach(function (item) {
+        var q = new URLSearchParams(location.search);
+        if (item[0]) q.set('mode', item[0]); else q.delete('mode');
+        var a = document.createElement('a');
+        a.href = '?' + q.toString();
+        a.textContent = item[1];
+        if (item[0] === forced) a.className = 'active';
+        row.appendChild(a);
+      });
+
+    var apps = document.getElementById('apps');
+    [
+      [T('appRtsp'), 'rtsp://' + location.hostname + ':8554/' + SRC],
+      [T('appHls'), apiURL('api/stream.m3u8?src=' + SRC + '&mp4')],
+      [T('appSnap'), apiURL('api/frame.jpeg?src=' + SRC)]
+    ].forEach(function (app) {
+      var line = document.createElement('div');
+      line.className = 'app';
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = app[0];
+      var code = document.createElement('code');
+      code.textContent = app[1];
+      line.appendChild(name);
+      line.appendChild(code);
+      apps.appendChild(line);
+    });
+  }
+
+  // ----------------------------------------------------------------- sound
+
+  // Optional radio: browsers only allow sound after a button press, so the
+  // stream always starts muted. The choice is remembered; with sound wanted,
+  // any OK/click press turns it back on.
+  var hasAudio = false;
+  var soundWanted = false;
+  try { soundWanted = localStorage.getItem('bambootv.sound') === 'on'; } catch (e) { /* private mode */ }
+  var soundBtn = document.getElementById('sound-btn');
+
+  function audioFound() {
+    if (hasAudio) return;
+    hasAudio = true;
+    renderSound();
+  }
+
+  function renderSound() {
+    var available = hasAudio && mode() !== 'mjpeg';
+    var playing = available && !video.muted;
+    document.getElementById('sound-row').hidden = !available;
+    soundBtn.textContent = playing ? T('soundOn') : T('soundOff');
+    soundBtn.className = playing ? 'active' : '';
+    text('sound-hint', available && !playing && soundWanted ? T('pressForSound') : '');
+    text('bug-note', playing ? '\u266A' : '');
+  }
+
+  function setSound(on) {
+    soundWanted = on;
+    try { localStorage.setItem('bambootv.sound', on ? 'on' : 'off'); } catch (e) { /* private mode */ }
+    video.muted = !on;
+    if (on) tryPlay();
+    renderSound();
+  }
+
+  soundBtn.addEventListener('click', function (ev) {
+    ev.preventDefault();
+    setSound(video.muted);
+  });
+  ['click', 'keydown', 'touchstart'].forEach(function (type) {
+    document.addEventListener(type, function () {
+      if (soundWanted && hasAudio && video.muted) setSound(true);
+    });
+  });
+
+  var idleTimer = 0;
+
+  function wake() {
+    var b = document.body.classList;
+    b.remove('idle', 'dim');
+    b.add('menu');
+    text('now', L.now(mode().toUpperCase()));
+    panelEl.hidden = false;
+    if (view === 'live') flashBug();
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () {
+      b.add('idle');
+      b.remove('menu');
+      panelEl.hidden = true;
+    }, 8000);
+    if (view === 'offline') {
+      clearTimeout(dimTimer);
+      dimTimer = setTimeout(function () { b.add('dim'); }, 10 * 60 * 1000);
+    }
+  }
+
+  ['mousemove', 'mousedown', 'keydown', 'touchstart'].forEach(function (type) {
+    document.addEventListener(type, wake, {passive: true});
+  });
+
+  // Release the printer camera while the TV shows something else.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      clearTimeout(retryTimer);
+      clearInterval(countdownTimer);
+      stopSession();
+    } else {
+      start();
+    }
+  });
+
+  buildPanel();
+  start();
+})();
+</script>
+</body>
+</html>
