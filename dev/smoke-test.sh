@@ -55,11 +55,15 @@ else
   fail "hls ($BASE/api/stream.m3u8?src=x2d&mp4: '$info')"
 fi
 
-# RTSP restream (also tells whether the optional radio is on)
-streams=$(ffprobe -v error -rtsp_transport tcp -analyzeduration 10M -probesize 20M \
-  -show_entries stream=codec_type,codec_name,width,height \
-  -of csv=p=0 "rtsp://$HOST:$RTSP_PORT/x2d" 2>/dev/null)
-info=$(grep -m 1 -E '^[a-z0-9]+,video,[1-9]' <<<"$streams" | cut -d, -f1,3,4)
+# RTSP restream (also tells whether the optional radio is on). Right after a
+# restart the printer and the radio are still connecting, so try twice.
+for _ in 1 2; do
+  streams=$(ffprobe -v error -rtsp_transport tcp -analyzeduration 10M -probesize 20M \
+    -show_entries stream=codec_type,codec_name,width,height \
+    -of csv=p=0 "rtsp://$HOST:$RTSP_PORT/x2d" 2>/dev/null)
+  info=$(grep -m 1 -E '^[a-z0-9]+,video,[1-9]' <<<"$streams" | cut -d, -f1,3,4)
+  [[ -n $info ]] && break
+done
 if [[ -n $info ]]; then
   ok "rtsp ($info)"
 else
