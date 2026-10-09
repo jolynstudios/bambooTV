@@ -329,8 +329,9 @@
   var ALL_MODES = ['mse', 'hls', 'mjpeg'];
 
   var params = new URLSearchParams(location.search);
-  var SRC = params.get('src') || 'x2d';
-  var MJPEG_SRC = params.get('mjpeg') || SRC + '_mjpeg';
+  var SRC = params.get('src') || 'tv';            // camera + optional radio
+  var CAM = params.get('cam') || 'x2d';           // plain camera (RTSP, snapshot)
+  var MJPEG_SRC = params.get('mjpeg') || CAM + '_mjpeg';
   var forced = ALL_MODES.indexOf(params.get('mode')) >= 0 ? params.get('mode') : '';
   var LANG = params.get('lang') ||
     ((navigator.language || '').toLowerCase().indexOf('nl') === 0 ? 'nl' : 'en');
@@ -987,9 +988,9 @@
 
     var apps = document.getElementById('apps');
     [
-      [T('appRtsp'), 'rtsp://' + location.hostname + ':8554/' + SRC],
+      [T('appRtsp'), 'rtsp://' + location.hostname + ':8554/' + CAM],
       [T('appHls'), apiURL('api/stream.m3u8?src=' + SRC + '&mp4')],
-      [T('appSnap'), apiURL('api/frame.jpeg?src=' + SRC)]
+      [T('appSnap'), apiURL('api/frame.jpeg?src=' + CAM)]
     ].forEach(function (app) {
       var line = document.createElement('div');
       line.className = 'app';

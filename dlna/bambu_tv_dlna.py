@@ -3,7 +3,7 @@
 """bambooTV DLNA: the printer camera as a video in TV media browsers.
 
 A deliberately small UPnP/DLNA MediaServer that offers exactly one item,
-"<STREAM> live". TVs find it through SSDP (Samsung: Source -> connected
+"X2D live". TVs find it through SSDP (Samsung: Source -> connected
 devices) and play it as MPEG-TS. ffmpeg remuxes that per viewer from
 go2rtc's local MP4 output (which keeps camera and optional radio audio in
 sync), so go2rtc keeps its single connection to the printer.
@@ -12,8 +12,9 @@ Standard library only (Python 3.9+). Settings come from the environment:
   DLNA_NAME    name shown on the TV                   (default "bambooTV")
   DLNA_PORT    HTTP port of this server               (default 49499)
   DLNA_LAN_IP  advertise this address instead of auto-detecting one
-  DLNA_TITLE   title of the video item                (default "<STREAM> live")
-  STREAM       go2rtc stream name                     (default "x2d")
+  DLNA_TITLE   title of the video item                (default "X2D live")
+  STREAM       go2rtc stream to play                  (default "tv": camera + radio)
+  CAM_STREAM   go2rtc camera stream for thumbnails    (default "x2d")
   HTTP_PORT    bambooTV web port (stream, thumbnail)  (default 1984)
 """
 
@@ -40,8 +41,9 @@ from xml.sax.saxutils import escape
 NAME = os.environ.get("DLNA_NAME") or "bambooTV"
 DLNA_PORT = int(os.environ.get("DLNA_PORT") or 49499)
 LAN_IP = os.environ.get("DLNA_LAN_IP") or ""
-STREAM = os.environ.get("STREAM") or "x2d"
-TITLE = os.environ.get("DLNA_TITLE") or STREAM.upper() + " live"
+STREAM = os.environ.get("STREAM") or "tv"
+CAM_STREAM = os.environ.get("CAM_STREAM") or "x2d"
+TITLE = os.environ.get("DLNA_TITLE") or "X2D live"
 HTTP_PORT = int(os.environ.get("HTTP_PORT") or 1984)
 
 UDN = "uuid:" + str(uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname() + "/bambu-tv/" + NAME))
@@ -388,7 +390,7 @@ class Handler(BaseHTTPRequestHandler):
     def thumbnail(self):
         """A live frame of the print, or the logo when the printer is offline."""
         data = None
-        url = "http://127.0.0.1:%d/api/frame.jpeg?src=%s&width=160&cache=15s" % (HTTP_PORT, STREAM)
+        url = "http://127.0.0.1:%d/api/frame.jpeg?src=%s&width=160&cache=15s" % (HTTP_PORT, CAM_STREAM)
         try:
             with urllib.request.urlopen(url, timeout=4) as r:
                 if r.status == 200:

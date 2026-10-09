@@ -376,7 +376,7 @@ bambooTV is running.
                http://$HOST_IP:$PORT/
 
   Other apps (VLC, IPTV apps, Home Assistant):
-    HLS       http://$HOST_IP:$PORT/api/stream.m3u8?src=x2d&mp4
+    HLS       http://$HOST_IP:$PORT/api/stream.m3u8?src=tv&mp4
     RTSP      rtsp://$HOST_IP:$RPORT/x2d
     MJPEG     http://$HOST_IP:$PORT/api/stream.mjpeg?src=x2d_mjpeg
     Snapshot  http://$HOST_IP:$PORT/api/frame.jpeg?src=x2d

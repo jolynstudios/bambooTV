@@ -3,10 +3,11 @@
 ## Architecture
 
 ```
-printer camera ──RTSPS :322──▶ go2rtc (service bambu-tv) ──┬─ :1984 TV page, MSE (WebSocket), HLS, MJPEG, snapshot, MP4
- (one connection, only                 ▲                    └─ :8554 RTSP restream
-  while someone watches)               │
-radio station ──HTTP(S)──▶ ffmpeg ─────┘ (optional second source, AAC)
+printer camera ──RTSPS :322──▶ go2rtc stream "x2d" ──┬─ :8554 RTSP restream, snapshot, MJPEG
+ (one connection, only            │                   │
+  while someone watches)          ▼                   │
+radio station ──▶ ffmpeg ──▶ go2rtc stream "tv" ──────┴─ :1984 TV page (MSE/HLS), MP4 → DLNA
+                 (optional, AAC)   (camera + radio)
 
 TV "connected devices" ◀── SSDP :1900 / HTTP :49499 ── bambu_tv_dlna.py (service bambu-tv-dlna)
                                                         └─ per viewer: ffmpeg remuxes go2rtc's MP4 → MPEG-TS
@@ -91,15 +92,23 @@ Verified against a real X2D:
 
 ## Radio
 
-- `config/radio.yaml` is a second go2rtc config file that redefines the `x2d`
-  stream with two sources: the printer and `ffmpeg:${RADIO_URL}#audio=aac`.
+- Two streams: **`x2d`** is the plain camera (RTSP, snapshot, MJPEG);
+  **`tv`** is what the TV page and DLNA play, defined as the camera via
+  go2rtc's own RTSP loopback. `config/radio.yaml` is a second go2rtc config
+  file that redefines `tv` with a second source, `ffmpeg:${RADIO_URL}#audio=aac`.
   The service always passes it; go2rtc skips a missing file, so the file's
   presence is the on/off switch.
+- Why two streams: the printer's SDP carries no codec parameters
+  (`sprop-parameter-sets`), and go2rtc's RTSP output does not align the
+  camera's and the radio's timestamps. An RTSP client joining a running
+  camera+radio stream then finds no picture parameters. go2rtc's MP4/HLS
+  muxers do align both tracks, so the radio only goes into `tv`, and RTSP apps
+  get the camera alone.
 - Consumers that only need video (snapshot, MJPEG) never start the radio. If
   the station is unreachable, consumers get video without audio.
 - go2rtc's MPEG-TS **HLS** variant does not repeat the codec setup when an
   audio track is present, so the app-facing HLS URL is the fMP4 variant
-  (`&mp4`), which works with and without radio.
+  (`?src=tv&mp4`), which works with and without radio.
 - Free stations insert their own ads, which may be geo-targeted.
 
 ## Security

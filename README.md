@@ -174,8 +174,8 @@ sudo systemctl restart bambu-tv bambu-tv-dlna
 
 | App | Address |
 |---|---|
-| VLC, Home Assistant, NVRs (RTSP) | `rtsp://<linux-machine-ip>:8554/x2d` |
-| IPTV apps, Safari, VLC (HLS) | `http://<linux-machine-ip>:1984/api/stream.m3u8?src=x2d&mp4` |
+| VLC, Home Assistant, NVRs (RTSP, camera only) | `rtsp://<linux-machine-ip>:8554/x2d` |
+| IPTV apps, Safari, VLC (HLS, with the radio when it's on) | `http://<linux-machine-ip>:1984/api/stream.m3u8?src=tv&mp4` |
 | MJPEG (old browsers, dashboards) | `http://<linux-machine-ip>:1984/api/stream.mjpeg?src=x2d_mjpeg` |
 | Snapshot (JPEG) | `http://<linux-machine-ip>:1984/api/frame.jpeg?src=x2d` |
 

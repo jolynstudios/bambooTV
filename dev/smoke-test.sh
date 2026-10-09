@@ -45,18 +45,24 @@ else
   fail "mjpeg (only $frames frames)"
 fi
 
-# HLS (fMP4 variant, as advertised to apps): let ffprobe follow the playlists
-# like a player would
-info=$(ffprobe -v error -rw_timeout 15000000 -select_streams v:0 -show_entries stream=codec_name,width,height \
-  -of csv=p=0 "$BASE/api/stream.m3u8?src=x2d&mp4" 2>/dev/null | head -n 1)
-if [[ $info =~ ,[1-9][0-9]*,[1-9] ]]; then
+# HLS of what TVs play ("tv": camera + optional radio), fMP4 variant as
+# advertised to apps; ffprobe follows the playlists like a player would
+tv_streams=$(ffprobe -v error -rw_timeout 15000000 -show_entries stream=codec_type,codec_name,width,height \
+  -of csv=p=0 "$BASE/api/stream.m3u8?src=tv&mp4" 2>/dev/null)
+info=$(grep -m 1 -E '^[a-z0-9]+,video,[1-9]' <<<"$tv_streams" | cut -d, -f1,3,4)
+if [[ -n $info ]]; then
   ok "hls ($info)"
 else
-  fail "hls ($BASE/api/stream.m3u8?src=x2d&mp4: '$info')"
+  fail "hls ($BASE/api/stream.m3u8?src=tv&mp4)"
+fi
+if audio=$(grep -m 1 ',audio' <<<"$tv_streams"); then
+  ok "radio: on (${audio%%,*} audio in the TV stream)"
+else
+  ok "radio: off"
 fi
 
-# RTSP restream (also tells whether the optional radio is on). Right after a
-# restart the printer and the radio are still connecting, so try twice.
+# RTSP restream of the plain camera. Right after a restart the printer is
+# still connecting, so try twice.
 for _ in 1 2; do
   streams=$(ffprobe -v error -rtsp_transport tcp -analyzeduration 10M -probesize 20M \
     -show_entries stream=codec_type,codec_name,width,height \
@@ -68,11 +74,6 @@ if [[ -n $info ]]; then
   ok "rtsp ($info)"
 else
   fail "rtsp (rtsp://$HOST:$RTSP_PORT/x2d)"
-fi
-if audio=$(grep -m 1 ',audio' <<<"$streams"); then
-  ok "radio: on (${audio%%,*} audio in the stream)"
-else
-  ok "radio: off"
 fi
 
 # DLNA (optional). Discovered like a TV does it: multicast M-SEARCH, then the

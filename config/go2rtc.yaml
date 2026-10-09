@@ -63,6 +63,11 @@ streams:
   # rtsps with a 301 to a non-existent default stream, which breaks go2rtc.
   x2d: rtsps://bblp:${ACCESS_CODE}@${PRINTER_IP}:322/streaming/live/1#backchannel=0
 
+  # What the TV page and DLNA play: the camera, plus the radio when it is on
+  # (config/radio.yaml redefines this stream). go2rtc's MP4/HLS muxers keep
+  # camera and radio on one timeline; RTSP apps use the plain camera (x2d).
+  tv: rtsp://127.0.0.1:${RTSP_PORT:8554}/x2d
+
   # MJPEG copy for browsers without MSE/HLS (720p, 10 fps). ffmpeg only runs
   # while someone is watching this stream.
   x2d_mjpeg: ffmpeg:x2d#video=mjpeg#width=1280#raw=-r 10 -q:v 7
