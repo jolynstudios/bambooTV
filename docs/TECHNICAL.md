@@ -127,8 +127,11 @@ Verified against a real X2D:
     `expansion=none` is required — the default text expansion swallows the
     `%` sign and with it the whole line. With no status text (status service
     off, printer offline) the stream stays a zero-CPU remux (`-c copy`).
-    `--overlay off` (or `OVERLAY=off` in Docker) forces the remux, e.g. on a
-    Raspberry Pi.
+    Both looks are switchable in the config: `OVERLAY=card` (default),
+    `OVERLAY=line` (the single line of 1.2.0) or `OVERLAY=off` — the card's
+    size and see-through-ness scale with `OVERLAY_SCALE` (0.4–3.0) and
+    `OVERLAY_OPACITY` (0.1–1.0). `--overlay off` (or `OVERLAY=off` in Docker)
+    forces the remux, e.g. on a Raspberry Pi.
   - **Stall recovery:** the printer dropping mid-stream (Wi-Fi power save,
     firmware reboot) would freeze a copy pipe forever. Instead the player
     rebuilds itself up to three times — a new `PAT`/`PMT` in the same

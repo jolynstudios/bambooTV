@@ -185,7 +185,9 @@ sudo systemctl restart bambu-tv bambu-tv-dlna
 | `--radio-url URL` | `RADIO_URL` | radio station stream | 181.FM Power 181 |
 | `--status on\|off` | — | print info on the TV page | on |
 | `--status-port PORT` | `STATUS_PORT` | port of the print info service | `1985` |
-| `--overlay on\|off` | — | burn the print progress into the DLNA picture (off saves CPU on a Raspberry Pi) | on |
+| `--overlay card\|line\|off` | `OVERLAY` | print info burned into the DLNA picture: the card, the one-line look of 1.2.0, or off | card |
+| `--overlay-scale N` | `OVERLAY_SCALE` | card size, 0.4–3.0 (a Raspberry Pi prefers `--overlay off`) | 1 |
+| `--overlay-opacity N` | `OVERLAY_OPACITY` | card see-through-ness, 0.1–1.0 | 1 |
 | — | `RTSP_USER`, `RTSP_PASS` | require a login for RTSP apps | open |
 
 ## Other apps

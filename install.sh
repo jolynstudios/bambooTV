@@ -48,7 +48,9 @@ PURGE=false
 WITH_DLNA=""     # "", true, false; "" = keep the current choice
 RADIO=""         # "", on, off;      "" = keep the current choice
 STATUS=""        # "", on, off;      "" = keep the current choice (on by default)
-OVERLAY=""       # "", on, off;      "" = keep the current choice (on by default)
+OVERLAY=""       # "", card, line, off; "" = keep the current choice (card by default)
+OVERLAY_SCALE=${OVERLAY_SCALE:-}
+OVERLAY_OPACITY=${OVERLAY_OPACITY:-}
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -75,8 +77,11 @@ Usage: sudo ./install.sh [options]
   --status on|off        print progress, temperatures and AMS on the TV page
                          (default on)
   --status-port PORT     port of the print status service (default 1985)
-  --overlay on|off       burn the print progress into the DLNA picture
-                         (default on; off saves CPU on a Raspberry Pi)
+  --overlay card|line|off
+                         burn the print info into the DLNA picture: the card
+                         (default), the one-line look of 1.2.0, or off
+  --overlay-scale N      size of the card, 0.4 to 3.0 (default 1)
+  --overlay-opacity N    see-through-ness of the card, 0.1 to 1.0 (default 1)
   --uninstall            remove bambooTV
   --purge                with --uninstall: also remove the settings
   -h, --help             this help
@@ -98,6 +103,8 @@ while [[ $# -gt 0 ]]; do
     --status)        STATUS=${2:?}; shift 2 ;;
     --status-port)   STATUS_PORT=${2:?}; shift 2 ;;
     --overlay)       OVERLAY=${2:?}; shift 2 ;;
+    --overlay-scale) OVERLAY_SCALE=${2:?}; shift 2 ;;
+    --overlay-opacity) OVERLAY_OPACITY=${2:?}; shift 2 ;;
     --uninstall)    UNINSTALL=true; shift ;;
     --purge)        PURGE=true; shift ;;
     -h|--help)      usage; exit 0 ;;
@@ -146,6 +153,14 @@ if [[ -f $ENV_FILE ]]; then
   DLNA_IP=${DLNA_IP:-${SAVED[DLNA_LAN_IP]:-}}
   RADIO_URL=${RADIO_URL:-${SAVED[RADIO_URL]:-}}
 fi
+# The DLNA service keeps its own file (no secrets); its look is saved there.
+declare -A DLNA_SAVED=()
+if [[ -f $DLNA_ENV_FILE ]]; then
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]] || continue
+    DLNA_SAVED[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
+  done <"$DLNA_ENV_FILE"
+fi
 
 # A reinstall keeps the current DLNA choice unless one is given.
 if [[ -z $WITH_DLNA ]]; then
@@ -159,8 +174,21 @@ fi
 [[ -n $STATUS ]] || { [[ ${SAVED[STATUS]:-} == off ]] && STATUS=off || STATUS=on; }
 [[ $STATUS == on || $STATUS == off ]] || die "--status expects on or off"
 # The overlay is on unless it was switched off (saved as OVERLAY=off).
-[[ -n $OVERLAY ]] || { [[ ${SAVED[OVERLAY]:-} == off ]] && OVERLAY=off || OVERLAY=on; }
-[[ $OVERLAY == on || $OVERLAY == off ]] || die "--overlay expects on or off"
+[[ -n $OVERLAY ]] || OVERLAY=${SAVED[OVERLAY]:-}
+[[ -n $OVERLAY ]] || OVERLAY=${DLNA_SAVED[OVERLAY]:-}
+[[ -n $OVERLAY ]] || OVERLAY=on
+OVERLAY=${OVERLAY,,}
+[[ $OVERLAY == on || $OVERLAY == card || $OVERLAY == line || $OVERLAY == off ]] ||
+  die "--overlay expects card, line or off (on = card)"
+[[ $OVERLAY == on ]] && OVERLAY=card
+OVERLAY_SCALE=${OVERLAY_SCALE:-${DLNA_SAVED[OVERLAY_SCALE]:-}}
+[[ -z $OVERLAY_SCALE ]] || { [[ $OVERLAY_SCALE =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+  awk -v v="$OVERLAY_SCALE" 'BEGIN{exit !(v >= 0.4 && v <= 3.0)}' ||
+  die "--overlay-scale expects a number from 0.4 to 3.0"; }
+OVERLAY_OPACITY=${OVERLAY_OPACITY:-${DLNA_SAVED[OVERLAY_OPACITY]:-}}
+[[ -z $OVERLAY_OPACITY ]] || { [[ $OVERLAY_OPACITY =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+  awk -v v="$OVERLAY_OPACITY" 'BEGIN{exit !(v >= 0.1 && v <= 1.0)}' ||
+  die "--overlay-opacity expects a number from 0.1 to 1.0"; }
 [[ $RADIO == off ]] || RADIO_URL=${RADIO_URL:-$DEFAULT_RADIO_URL}
 # No spaces, quotes, '#' or '$': the URL ends up inside a go2rtc source string.
 URL_RE='^https?://[A-Za-z0-9._~:/?&=%+,;@!-]+$'
@@ -406,7 +434,9 @@ if [[ $WITH_DLNA == true ]]; then
     # The overlay polls the status service (same port), which install.sh starts
     # whenever print status is on; STATUS_PORT only needs writing when moved.
     [[ $STATUS == on && $SPORT != 1985 ]] && echo "STATUS_PORT=$SPORT" || true
-    [[ $OVERLAY == off ]] && echo "OVERLAY=off" || true
+    echo "OVERLAY=$OVERLAY"
+    [[ -z $OVERLAY_SCALE ]] || echo "OVERLAY_SCALE=$OVERLAY_SCALE"
+    [[ -z $OVERLAY_OPACITY ]] || echo "OVERLAY_OPACITY=$OVERLAY_OPACITY"
     [[ -z $DLNA_IP ]] || echo "DLNA_LAN_IP=$DLNA_IP"
   } >"$DLNA_ENV_FILE"
   chmod 0644 "$DLNA_ENV_FILE"

@@ -17,7 +17,9 @@ Standard library only (Python 3.9+). Settings come from the environment:
   CAM_STREAM   go2rtc camera stream for thumbnails    (default "x2d")
   HTTP_PORT    bambooTV web port (stream, thumbnail)  (default 1984)
   STATUS_PORT  print status port (overlay text)       (default 1985)
-  OVERLAY      burn the print card into the picture   (default "on"; "off" = plain copy)
+  OVERLAY      burn-in look: card (default), line (1.2.0) or off
+  OVERLAY_SCALE    card size, 0.4 to 3.0              (default 1)
+  OVERLAY_OPACITY  card see-through-ness, 0.1 to 1.0  (default 1)
   STATUS_TEXT  overlay text directory (…/status.txt)  (default /run/bambu-tv/status.txt)
 """
 
@@ -51,14 +53,17 @@ CAM_STREAM = os.environ.get("CAM_STREAM") or "x2d"
 TITLE = os.environ.get("DLNA_TITLE") or "X2D live"
 HTTP_PORT = int(os.environ.get("HTTP_PORT") or 1984)
 STATUS_PORT = int(os.environ.get("STATUS_PORT") or 1985)
-OVERLAY = (os.environ.get("OVERLAY") or "on") != "off"
+# The burn-in comes in two looks: "card" (the TV page's panel, default) and
+# "line" (the single line of 1.2.0). "off" plays the untouched camera.
+_OVERLAY_ALIAS = {"on": "card", "card": "card", "new": "card", "line": "line",
+                  "text": "line", "old": "line", "off": "off", "no": "off", "0": "off"}
+OVERLAY_MODE = _OVERLAY_ALIAS.get((os.environ.get("OVERLAY") or "on").strip().lower(), "card")
+CARD_SCALE = max(0.4, min(3.0, float(os.environ.get("OVERLAY_SCALE") or 1.0)))
+CARD_OPACITY = max(0.1, min(1.0, float(os.environ.get("OVERLAY_OPACITY") or 1.0)))
 STATUS_TEXT = os.environ.get("STATUS_TEXT") or "/run/bambu-tv/status.txt"
 STATUS_DIR = os.path.dirname(STATUS_TEXT)
 CARD_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "card.png")
 CARD_W, CARD_H, CARD_MARGIN = 520, 250, 64
-# Where the card sits: like the TV page, bottom right, title-safe inside.
-CARD_X0 = "(main_w-%d-24*mod(floor(t/60)\\,2))" % (CARD_W + CARD_MARGIN)
-CARD_Y0 = "(main_h-%d)" % (CARD_H + 72)
 BONE, ASH, SILK = "#EFEAE1", "#8E8A83", "#E4B45B"
 BAR_BLOCKS = 12
 
@@ -138,16 +143,19 @@ def card_fields(data):
     if isinstance(temps.get("chamber"), dict):
         parts.append("C %d°" % temps["chamber"].get("temp", 0))
     fields["temps"] = " · ".join(parts)
+    fields["line"] = " · ".join(piece for piece in (
+        fields["name"], fields["pct"] if state == "RUNNING" else fields["state"],
+        fields["eta"], fields["temps"]) if piece)
     return fields
 
 
-CARD_FILES = ("state", "name", "pct", "eta", "bar", "temps")
+CARD_FILES = ("state", "name", "pct", "eta", "bar", "temps", "line")
 
 
 def write_card(fields):
     """Atomically refresh every card text file (empty files are valid: they hide a row)."""
     for key in CARD_FILES:
-        target = os.path.join(STATUS_DIR, "card-%s.txt" % key)
+        target = STATUS_TEXT if key == "line" else os.path.join(STATUS_DIR, "card-%s.txt" % key)
         try:
             with open(target + ".tmp", "w") as f:
                 f.write(fields[key])
@@ -186,8 +194,10 @@ def poll_overlay():
 
 
 def overlay_wanted():
-    return OVERLAY and os.path.exists(os.path.join(STATUS_DIR, "card-state.txt")) \
-        and os.path.getsize(os.path.join(STATUS_DIR, "card-state.txt")) > 0
+    if OVERLAY_MODE == "off":
+        return False
+    marker = STATUS_TEXT if OVERLAY_MODE == "line" else os.path.join(STATUS_DIR, "card-state.txt")
+    return os.path.exists(marker) and os.path.getsize(marker) > 0
 
 
 def font_file():
@@ -209,20 +219,34 @@ def card_filter():
     font = font_file()
     if not font or not os.path.isfile(CARD_PNG):
         return ""
+    s = CARD_SCALE
+    w, h = int(round(CARD_W * s)), int(round(CARD_H * s))
+    x0 = "(main_w-%d-24*mod(floor(t/60)\\,2))" % (w + CARD_MARGIN)
+    y0 = "(main_h-%d)" % (h + 72)
+
+    def px(v):
+        return int(round(v * s))
+
+    src = "[1:v]"
+    if CARD_OPACITY < 1.0:  # the PNG carries its own 62%; this trims it further
+        src += "format=rgba,colorchannelmixer=aa=%.2f[c]" % CARD_OPACITY
+    else:
+        src += "null[c]"
     # The drift keeps a static card from burning into OLED panels; the single
     # quotes protect the commas from the filtergraph parser. Every text sits
-    # at a fixed offset inside the 620x300 card, so it moves with the card.
+    # at a fixed offset inside the card, so it scales and moves with it.
     return (
-        "[0:v][1:v]overlay=x='%s':y='%s'[bg];[bg]"
+        "%s;"
+        "[0:v][c]overlay=x='%s':y='%s'[bg];[bg]"
         "%s,%s,%s,%s,%s,%s[v]"
     ) % (
-        CARD_X0, CARD_Y0,
-        _card_text("state", CARD_X0 + "+150", CARD_Y0 + "+30", 22, ASH),
-        _card_text("name", CARD_X0 + "+150", CARD_Y0 + "+56", 25, BONE),
-        _card_text("pct", CARD_X0 + "+150", CARD_Y0 + "+96", 52, BONE),
-        _card_text("eta", "(%s+486-text_w)" % CARD_X0, CARD_Y0 + "+142", 22, ASH),
-        _card_text("bar", CARD_X0 + "+150", CARD_Y0 + "+176", 30, SILK),
-        _card_text("temps", CARD_X0 + "+150", CARD_Y0 + "+214", 23, BONE),
+        src, x0, y0,
+        _card_text("state", "%s+%d" % (x0, px(150)), "%s+%d" % (y0, px(30)), px(22), ASH),
+        _card_text("name", "%s+%d" % (x0, px(150)), "%s+%d" % (y0, px(56)), px(25), BONE),
+        _card_text("pct", "%s+%d" % (x0, px(150)), "%s+%d" % (y0, px(96)), px(52), BONE),
+        _card_text("eta", "(%s+%d-text_w)" % (x0, px(486)), "%s+%d" % (y0, px(142)), px(22), ASH),
+        _card_text("bar", "%s+%d" % (x0, px(150)), "%s+%d" % (y0, px(176)), px(30), SILK),
+        _card_text("temps", "%s+%d" % (x0, px(150)), "%s+%d" % (y0, px(214)), px(23), BONE),
     )
 
 
@@ -243,25 +267,24 @@ def player_args(ffmpeg):
     """One ffmpeg: go2rtc's MP4 in, MPEG-TS for the TV out."""
     cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
            "-i", "http://127.0.0.1:%d/api/stream.mp4?src=%s" % (HTTP_PORT, STREAM)]
-    if overlay_wanted():
-        chain = card_filter()
-        legacy = os.path.exists(STATUS_TEXT) and os.path.getsize(STATUS_TEXT) > 0
-        if chain:
-            # Re-encode only to burn the card in; otherwise a plain remux.
-            cmd += ["-i", CARD_PNG, "-filter_complex", chain,
-                    "-map", "[v]", "-map", "0:a:0?",  # audio only when the radio is on
-                    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-                    "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
-        elif legacy:
-            cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-vf", fallback_filter(),
-                    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-                    "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
-        else:
-            cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
-    else:
-        cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
-    return cmd + ["-f", "mpegts", "-mpegts_flags", "+resend_headers",
-                  "-muxdelay", "0", "-muxpreload", "0", "pipe:1"]
+    if not overlay_wanted():
+        return cmd + ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+                      "-f", "mpegts", "-mpegts_flags", "+resend_headers",
+                      "-muxdelay", "0", "-muxpreload", "0", "pipe:1"]
+    encode = ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+              "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
+    tail = ["-f", "mpegts", "-mpegts_flags", "+resend_headers",
+            "-muxdelay", "0", "-muxpreload", "0", "pipe:1"]
+    # The old single-line look, on request (OVERLAY=line).
+    if OVERLAY_MODE == "line":
+        return cmd + ["-map", "0:v:0", "-map", "0:a:0?", "-vf", fallback_filter()] + encode + tail
+    chain = card_filter()
+    if chain:  # the card: re-encode only to burn it in; otherwise a plain remux.
+        return cmd + ["-i", CARD_PNG, "-filter_complex", chain,
+                      "-map", "[v]", "-map", "0:a:0?"] + encode + tail
+    if os.path.exists(STATUS_TEXT) and os.path.getsize(STATUS_TEXT) > 0:
+        return cmd + ["-map", "0:v:0", "-map", "0:a:0?", "-vf", fallback_filter()] + encode + tail
+    return cmd + ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"] + tail
 
 
 def start_player(ffmpeg):
@@ -674,7 +697,7 @@ class Handler(BaseHTTPRequestHandler):
             # the overlay poller needs a second to fetch the status. Without
             # this wait the first viewer gets the plain-copy pipeline and the
             # burned-in status only appears after the next stall.
-            if OVERLAY:
+            if OVERLAY_MODE != "off":
                 deadline = time.time() + 4
                 while not overlay_wanted() and time.time() < deadline:
                     time.sleep(0.25)
