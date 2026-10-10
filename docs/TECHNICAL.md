@@ -11,6 +11,10 @@ radio station ──▶ ffmpeg ──▶ go2rtc stream "tv" ──────�
 
 TV "connected devices" ◀── SSDP :1900 / HTTP :49499 ── bambu_tv_dlna.py (service bambu-tv-dlna)
                                                         └─ per viewer: ffmpeg remuxes go2rtc's MP4 → MPEG-TS
+
+printer status ──MQTT/TLS :8883──▶ bambu_tv_status.py ──HTTP :1985 /status.json──▶ TV page card
+ (read-only subscription,           (service bambu-tv-status)
+  only while someone watches)
 ```
 
 - **go2rtc 1.9.14** does all streaming. The installer pins the release and
@@ -23,6 +27,9 @@ TV "connected devices" ◀── SSDP :1900 / HTTP :49499 ── bambu_tv_dlna.p
   directory and replaces go2rtc's admin UI.
 - **The DLNA server** (`dlna/bambu_tv_dlna.py`) is a small, standard-library
   Python UPnP MediaServer with exactly one item.
+- **The status service** (`status/bambu_tv_status.py`) is a small,
+  standard-library Python MQTT subscriber and HTTP server that turns the
+  printer's status report into the TV page's print card.
 
 ## Printer camera protocol (X2D, firmware 01.02.00.00)
 
@@ -117,10 +124,46 @@ Verified against a real X2D:
   (`?src=tv&mp4`), which works with and without radio.
 - Free stations insert their own ads, which may be geo-targeted.
 
+## Print status
+
+- **Feed:** the printer runs an MQTT broker on **port 8883** (TLS, user
+  `bblp`, password = the LAN access code) and publishes its state on
+  `device/<serial>/report`; Bambu Studio uses the same feed in LAN mode. The
+  X2D (firmware 01.02.00.00) sends a complete report about once a second with
+  LAN Only Liveview on; models that send partial updates are merged into one
+  state.
+- **Read-only:** the service only subscribes. It never publishes, so it cannot
+  start, pause, stop or change anything on the printer.
+- **Serial number:** the topic needs the printer's serial number, which is the
+  common name of the printer's own TLS certificate, so nothing has to be
+  configured. `PRINTER_SERIAL` overrides it.
+- **On demand:** the service connects when the TV page first asks for the
+  status and disconnects a minute after the last request. Errors are retried
+  after 2, 5, 10, then every 30 s. MQTT keep-alive is 30 s.
+- **Summary:** `/status.json` holds the job (state, name, percent, minutes
+  left, layer, current stage, number of alerts), the temperatures (each
+  nozzle, bed, chamber) and the AMS (per unit: humidity in %, temperature and
+  each slot's material, name, colours and the active slot; external spools).
+  Dual-nozzle printers (H2D, X2D) pack a temperature as
+  `(target << 16) | current`; the active nozzle is the one with the highest
+  target. `tray_now` counts four slots per AMS; an AMS HT (id 128 and up) has
+  one. The serial number and the access code are not in the summary.
+- **TV page:** polls every 2 s while visible (not when the TV shows another
+  app). *Auto* shows the card for 15 s when the page opens, every 10 %, on a
+  state change and on a remote press, and otherwise a small tag with the
+  progress and the ready time; *Always* and *Off* are in the menu and
+  remembered per TV. The card's mark is the bambooTV logo, its four layers
+  filled to the print's progress with the hotend on the current one. OLED
+  care: the card and tag drift slightly every minute and dim after ten
+  minutes without a remote press.
+- **CORS:** the page and the status service run on different ports, so the
+  service answers `Access-Control-Allow-Origin: *` (it serves no credentials)
+  and only to private addresses.
+
 ## Security
 
-Open on the home network by design: the TV page, the streams and the DLNA
-server (a TV cannot log in). Everything else is closed:
+Open on the home network by design: the TV page, the streams, the print status
+and the DLNA server (a TV cannot log in). Everything else is closed:
 
 - **API allow-list:** only the static page, `/api/ws`, HLS, MP4, MJPEG and
   snapshot endpoints are registered. go2rtc's config editor, stream management,
@@ -134,11 +177,19 @@ server (a TV cannot log in). Everything else is closed:
   advisories (ZDI-26-560/561).
 - **Secrets:** the access code lives in `/etc/bambu-tv/bambu-tv.env` (root,
   0600). go2rtc masks substituted values in its logs and strips credentials
-  from errors sent to browsers. The DLNA service gets a separate environment
-  file without the code.
-- **Sandbox:** both services run as `DynamicUser` with `ProtectSystem=strict`,
-  `ProtectHome`, no capabilities, `@system-service` syscalls and restricted
-  address families; `systemd-analyze security` rates both 1.7 (OK).
+  from errors sent to browsers. The status service needs the code for its
+  login and never logs or serves it. The DLNA service gets a separate
+  environment file without the code.
+- **Printer certificate:** each printer has its own certificate, signed by
+  Bambu Lab's device CA, which is in no trust store. Like go2rtc for the
+  camera (`rtsps://` to an IP address), the status service accepts it without
+  verification. Someone who can impersonate the printer on your LAN could
+  therefore learn the access code; this is inherent to the printer's LAN
+  protocols.
+- **Sandbox:** all three services run as `DynamicUser` with
+  `ProtectSystem=strict`, `ProtectHome`, no capabilities, `@system-service`
+  syscalls and restricted address families; `systemd-analyze security` rates
+  each 1.7 (OK).
 - **Accepted on a home LAN:** go2rtc's WebSocket, MP4 and snapshot endpoints
   accept ad-hoc `?src=` sources (RTSP/HTTP/ffmpeg URLs), and the MJPEG and
   RTSP servers accept incoming streams. Someone on your network could make
@@ -152,9 +203,12 @@ server (a TV cannot log in). Everything else is closed:
 
 `dev/fake-printer.sh` simulates the X2D camera (RTSPS on 322, self-signed
 certificate, `/streaming/live/1`, digest login). `dev/smoke-test.sh` checks
-the page, snapshot, MJPEG, HLS, RTSP, radio audio, the DLNA chain as a TV sees
-it (multicast M-SEARCH → description → Browse → playing the item URL), and that
-admin endpoints and scripted sources are refused.
+the page, snapshot, MJPEG, HLS, RTSP, radio audio, the print status (live feed
+and CORS header), the DLNA chain as a TV sees it (multicast M-SEARCH →
+description → Browse → playing the item URL), and that admin endpoints and
+scripted sources are refused. The simulated printer includes the status feed
+(`dev/fake-mqtt.py`: an X2D-style report every second, with options for
+paused, finished, stopped and idle prints).
 
 Verified on 9 and 10 October 2026:
 
@@ -162,6 +216,7 @@ Verified on 9 and 10 October 2026:
 |---|---|
 | Real X2D (fw 01.02.00.00) + Ubuntu 24.04 home server, two NICs | smoke test 19/19 with radio on; DLNA visible on both interfaces |
 | Same network: router with IGMP snooping and no IGMP querier | hosts stop receiving SSDP about 4 minutes after joining; with the per-minute re-join the server kept receiving and answered every search for 11 minutes |
+| Real X2D, printing (10 October) | status feed live within 3 s; progress, layer, time left, both nozzles, bed, chamber and the AMS (four slots, active slot, humidity) match the printer |
 | Samsung QE77S93C (Tizen) | discovered the DLNA server, fetched its icon and thumbnail, played the MPEG-TS item |
 | Debian 12 systemd container (arm64) | install, reinstall, migration from the former Gerbera add-on, DLNA on/off, radio on/off, uninstall, purge; smoke test green |
 | Chrome, 1920×1080 | MSE live; fallback MSE → HLS → MJPEG; printer off → hint → recovery; sound on/off |
@@ -175,6 +230,7 @@ Verified on 9 and 10 October 2026:
 | `config/radio.yaml` | optional radio source (second config file) |
 | `web/` | TV page, logo, icon, bundled font |
 | `dlna/` | DLNA server and its icons |
-| `systemd/` | `bambu-tv` and `bambu-tv-dlna` units |
+| `status/` | print status service |
+| `systemd/` | `bambu-tv`, `bambu-tv-status` and `bambu-tv-dlna` units |
 | `compose.yaml`, `bambu-tv.env.example` | Docker setup |
-| `dev/` | simulated printer and end-to-end smoke test |
+| `dev/` | simulated printer (camera and status feed) and end-to-end smoke test |

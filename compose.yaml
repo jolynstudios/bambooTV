@@ -1,6 +1,6 @@
 # Docker alternative to install.sh (Linux host).
 #   cp bambu-tv.env.example bambu-tv.env   # fill in PRINTER_IP and ACCESS_CODE
-#   docker compose up -d
+#   docker compose up -d                   # TV page + print status
 #
 # Optional DLNA (the stream shows up under the TV's connected devices):
 #   docker compose --profile dlna up -d
@@ -22,6 +22,18 @@ services:
       - ./config/go2rtc.yaml:/config/go2rtc.yaml:ro
       # - ./config/radio.yaml:/config/radio.yaml:ro
       - ./web:/bambu-tv/web:ro
+
+  bambu-tv-status:
+    # Print progress, temperatures and AMS for the TV page. Same image: it
+    # ships python3. Reads the printer's status feed only (read-only).
+    image: alexxit/go2rtc:1.9.14
+    container_name: bambu-tv-status
+    restart: unless-stopped
+    network_mode: host
+    env_file: bambu-tv.env
+    command: ["python3", "-I", "/bambu-tv/status/bambu_tv_status.py"]
+    volumes:
+      - ./status:/bambu-tv/status:ro
 
   bambu-tv-dlna:
     # Same image: it ships python3 and ffmpeg, which is all the DLNA server needs.

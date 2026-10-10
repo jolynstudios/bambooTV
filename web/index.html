@@ -236,12 +236,114 @@
   .app { display: flex; align-items: baseline; margin: 0.2em 0; }
   .app .name { width: 12em; flex: none; color: var(--ash); font-size: 0.86em; }
   .app code { font-family: var(--mono); font-size: 0.82em; color: var(--bone); word-break: break-all; }
+  body.job-on .panel { max-width: calc(90vw - 25em); }  /* clear of the print card */
+
+  /* --------------------------------------------------------- print status */
+  /* The card's mark is the logo printing itself at the print's own progress. */
+  .job, .pill {
+    position: fixed;
+    right: var(--sx);
+    bottom: var(--sy);
+    box-sizing: border-box;
+    border: 1px solid var(--edge);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.6s ease, visibility 0s linear 0.6s, transform 6s ease-in-out;
+  }
+  .job.show, .pill.show { opacity: 1; visibility: visible; transition: opacity 0.6s ease, transform 6s ease-in-out; }
+  body.status-dim .job.show, body.status-dim .pill.show { opacity: 0.45; transition: opacity 4s ease, transform 6s ease-in-out; }
+  body.offline.job-on .slate { padding-bottom: 24vh; }
+  .job {
+    width: 23em;
+    padding: 1.15em 1.3em 1.2em;
+    border-radius: 0.9em;
+    background: rgba(13, 14, 16, 0.84);
+  }
+  .job-top { display: flex; align-items: center; }
+  .job .mark { width: 3.7em; height: 3.9em; flex: none; margin-right: 1.15em; }
+  .job-title { flex: 1; min-width: 0; }
+  .job-eyebrow, .job-name { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-eyebrow {
+    font-family: var(--mono);
+    font-size: 0.66em;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ash);
+  }
+  .job-eyebrow i {
+    display: inline-block;
+    width: 0.62em;
+    height: 0.62em;
+    margin-right: 0.75em;
+    border-radius: 50%;
+    background: var(--silk);
+    vertical-align: 0.05em;
+  }
+  .job[data-state="RUNNING"] .job-eyebrow i, .job[data-state="PREPARE"] .job-eyebrow i { animation: tally 2.4s ease-in-out infinite; }
+  .job[data-state="PAUSE"] .job-eyebrow i, .job[data-state="FAILED"] .job-eyebrow i { background: var(--tally); }
+  .job[data-state="FINISH"] .job-eyebrow i { background: var(--bone); }
+  .job[data-state="IDLE"] .job-eyebrow i { background: var(--ash); }
+  .job-name { margin-top: 0.3em; font-size: 1.02em; font-weight: 600; }
+  .job-name:empty { display: none; }
+  .job-figures { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 0.2em; }
+  .job-pct { font-family: var(--display); font-weight: 650; font-size: 2.6em; line-height: 1; letter-spacing: -0.01em; }
+  .job-pct small { margin-left: 0.1em; font-size: 0.42em; font-weight: 600; color: var(--ash); vertical-align: 0.95em; }
+  .job-eta { margin-left: 1em; padding-bottom: 0.2em; text-align: right; font-family: var(--mono); line-height: 1.4; white-space: nowrap; }
+  .job-eta span { display: block; }
+  .job-eta span:empty { display: none; }
+  #job-ready { font-size: 0.78em; letter-spacing: 0.06em; }
+  #job-left { font-size: 0.68em; color: var(--ash); }
+  .job-bar { position: relative; height: 0.3em; margin-top: 1.05em; border-radius: 0.15em; background: rgba(239, 234, 225, 0.12); overflow: hidden; }
+  .job-bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 0.15em; background: linear-gradient(90deg, #B66A3A, #E4B45B); transition: width 1.2s ease; }
+  .job-alert { margin: 0.8em 0 0; font-size: 0.86em; color: var(--tally); }
+  .job-alert:empty { display: none; }
+  .job.no-job .mark, .job.no-job .job-figures, .job.no-job .job-bar { display: none; }
+  .job.no-job .job-temps { margin-top: 0.9em; }
+  /* A stopped print goes cold, like the offline slate. */
+  .job[data-state="FAILED"] .mark .layer { stroke: #44474D; }
+  .job[data-state="FAILED"] .mark .filament { stroke: #55585E; }
+  .job[data-state="FAILED"] .job-bar i { background: #55585E; }
+
+  .job-temps { display: flex; margin-top: 1.05em; }
+  .job-temps > div { flex: 1; min-width: 0; }
+  .job-label { display: block; font-family: var(--mono); font-size: 0.6em; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ash); }
+  .job-temp { display: block; margin-top: 0.25em; font-family: var(--display); font-weight: 600; font-size: 1.15em; line-height: 1.1; white-space: nowrap; }
+  .job-temp .aim { margin-left: 0.4em; font-family: var(--mono); font-weight: 400; font-size: 0.58em; color: var(--silk); }
+  .job-temp .other { margin-left: 0.55em; font-size: 0.62em; color: var(--ash); }
+
+  .job-ams { display: flex; align-items: center; flex-wrap: wrap; margin-top: 1em; padding-top: 0.95em; border-top: 1px solid var(--edge); }
+  .job-ams:empty { display: none; }
+  .job-ams .job-label { display: inline; margin-right: 1.2em; }
+  .spool {
+    display: inline-block;
+    width: 1.2em;
+    height: 1.2em;
+    margin: 0.2em 0.6em 0.2em 0;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(239, 234, 225, 0.32);
+  }
+  .spool.dark { box-shadow: inset 0 0 0 1px rgba(239, 234, 225, 0.6); }  /* black filament on a dark card */
+  .spool.active { margin: 0.2em 0.95em 0.2em 0.35em; box-shadow: inset 0 0 0 1px rgba(239, 234, 225, 0.32), 0 0 0 0.14em var(--carbon), 0 0 0 0.29em var(--silk); }
+  .spool.active.dark { box-shadow: inset 0 0 0 1px rgba(239, 234, 225, 0.6), 0 0 0 0.14em var(--carbon), 0 0 0 0.29em var(--silk); }
+  .spool.empty { box-shadow: inset 0 0 0 1px rgba(239, 234, 225, 0.18); background: none; }
+  .spool.unknown { background: repeating-linear-gradient(45deg, #44474D 0, #44474D 0.15em, #2C2E33 0.15em, #2C2E33 0.3em); }
+  .ams-gap { display: inline-block; width: 0.6em; }
+  .ams-name { margin-left: 0.25em; font-size: 0.8em; white-space: nowrap; }
+  .ams-env { margin-left: auto; padding-left: 0.8em; font-family: var(--mono); font-size: 0.66em; color: var(--ash); white-space: nowrap; }
+
+  .pill { display: flex; align-items: center; padding: 0.4em 1em 0.4em 0.6em; border-radius: 0.7em; background: rgba(13, 14, 16, 0.62); }
+  .pill .mark { width: 1.9em; height: 2em; margin-right: 0.7em; }
+  .pill b { font-family: var(--display); font-weight: 650; font-size: 1.05em; }
+  .pill span { margin-left: 0.85em; font-family: var(--mono); font-size: 0.78em; color: var(--ash); }
+  .pill span:empty { display: none; }
 
   [hidden] { display: none !important; }
 
   @media (prefers-reduced-motion: reduce) {
-    .tally i { animation: none; }
-    .slate-inner { transition: none; }
+    .tally i, .job-eyebrow i { animation: none !important; }
+    .slate-inner, .job, .pill { transition: none; }
+    .job-bar i { transition: none; }
   }
 </style>
 </head>
@@ -292,9 +394,65 @@
   <span id="bug-note" class="note"></span>
 </div>
 
+<aside id="job" class="job" aria-hidden="true">
+  <div class="job-top">
+    <svg class="mark" viewBox="0 0 80 84">
+      <rect class="frame" x="4" y="16" width="72" height="52" rx="12"/>
+      <path class="frame" d="M28 78H52"/>
+      <path class="layer l1" d="M66 58.5H14"/>
+      <path class="layer l2" d="M14 49H66"/>
+      <path class="layer l3" d="M66 39.5H14"/>
+      <path class="layer l4" d="M14 30H66"/>
+      <g class="head">
+        <path class="halo" d="M42 -80V11"/>
+        <rect class="halo" x="33" y="10" width="18" height="10" rx="2.5"/>
+        <path class="filament" d="M42 -80V11"/>
+        <rect class="block" x="33" y="10" width="18" height="10" rx="2.5"/>
+        <path class="block" d="M36.5 20h11l-3.6 6h-3.8z"/>
+      </g>
+    </svg>
+    <div class="job-title">
+      <p class="job-eyebrow"><i></i><span id="job-state"></span></p>
+      <p id="job-name" class="job-name"></p>
+      <div class="job-figures">
+        <span class="job-pct"><span id="job-pct"></span><small>%</small></span>
+        <span class="job-eta"><span id="job-ready"></span><span id="job-left"></span></span>
+      </div>
+    </div>
+  </div>
+  <div class="job-bar"><i id="job-bar"></i></div>
+  <p id="job-alert" class="job-alert"></p>
+  <div class="job-temps">
+    <div><span id="t-nozzle-label" class="job-label"></span><span id="t-nozzle" class="job-temp"></span></div>
+    <div><span id="t-bed-label" class="job-label"></span><span id="t-bed" class="job-temp"></span></div>
+    <div id="t-chamber-cell"><span id="t-chamber-label" class="job-label"></span><span id="t-chamber" class="job-temp"></span></div>
+  </div>
+  <div id="job-ams" class="job-ams"></div>
+</aside>
+
+<div id="pill" class="pill" aria-hidden="true">
+  <svg class="mark" viewBox="0 0 80 84">
+    <rect class="frame" x="4" y="16" width="72" height="52" rx="12"/>
+    <path class="frame" d="M28 78H52"/>
+    <path class="layer l1" d="M66 58.5H14"/>
+    <path class="layer l2" d="M14 49H66"/>
+    <path class="layer l3" d="M66 39.5H14"/>
+    <path class="layer l4" d="M14 30H66"/>
+    <g class="head">
+      <path class="halo" d="M42 -80V11"/>
+      <rect class="halo" x="33" y="10" width="18" height="10" rx="2.5"/>
+      <path class="filament" d="M42 -80V11"/>
+      <rect class="block" x="33" y="10" width="18" height="10" rx="2.5"/>
+      <path class="block" d="M36.5 20h11l-3.6 6h-3.8z"/>
+    </g>
+  </svg>
+  <b id="pill-pct"></b><span id="pill-eta"></span>
+</div>
+
 <nav id="panel" class="panel" hidden>
   <div class="row"><span id="playback-label" class="label"></span><span id="modes" class="modes"></span><span id="now" class="now"></span></div>
   <div id="sound-row" class="row" hidden><span id="sound-label" class="label"></span><span class="modes"><button id="sound-btn" type="button"></button></span><span id="sound-hint" class="now"></span></div>
+  <div class="row"><span id="status-label" class="label"></span><span id="status-modes" class="modes"></span><span id="status-hint" class="now"></span></div>
   <div class="row"><span id="apps-label" class="label"></span><div id="apps" class="apps"></div></div>
 </nav>
 
@@ -379,7 +537,34 @@
       sound: 'Sound',
       soundOn: 'On',
       soundOff: 'Off',
-      pressForSound: 'press OK for sound'
+      pressForSound: 'press OK for sound',
+      printInfo: 'Print info',
+      always: 'Always',
+      appStatus: 'Print status (JSON)',
+      states: {PREPARE: 'Preparing', RUNNING: 'Printing', PAUSE: 'Paused', FINISH: 'Done', FAILED: 'Stopped',
+        IDLE: 'Printer idle', SLICING: 'Slicing'},
+      stages: {1: 'Auto bed leveling', 2: 'Heating the bed', 4: 'Changing filament', 6: 'Filament ran out',
+        7: 'Heating the nozzle', 8: 'Calibrating extrusion', 9: 'Scanning the bed', 10: 'Checking the first layer',
+        13: 'Homing', 14: 'Cleaning the nozzle', 16: 'Paused on the printer', 22: 'Unloading filament',
+        24: 'Loading filament', 29: 'Cooling the chamber'},
+      layer: function (a, b) { return 'Layer ' + a + ' / ' + b; },
+      ready: function (day, time) { return 'Ready ' + (day ? day + ' ' : '') + time; },
+      tomorrow: 'tomorrow',
+      days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      left: function (h, m) { return (h ? h + ' h ' : '') + m + ' min left'; },
+      almostDone: 'Almost done',
+      nozzle: 'Nozzle',
+      nozzles: 'Nozzles',
+      bed: 'Bed',
+      chamber: 'Chamber',
+      external: 'Ext',
+      off: 'Off',
+      humidity: function (h) { return h + '% RH'; },
+      checkPrinter: 'The printer needs attention: check its screen',
+      statusHints: {connecting: 'connecting to the printer', auth: 'the printer rejected the access code',
+        unreachable: 'printer not reachable', refused: 'the printer refused the connection',
+        serial: 'printer serial number unknown', protocol: 'unexpected answer from the printer',
+        service: 'not available (status service not running)'}
     },
     nl: {
       connect: 'Verbinden met de printer',
@@ -422,7 +607,34 @@
       sound: 'Geluid',
       soundOn: 'Aan',
       soundOff: 'Uit',
-      pressForSound: 'druk op OK voor geluid'
+      pressForSound: 'druk op OK voor geluid',
+      printInfo: 'Printinfo',
+      always: 'Altijd',
+      appStatus: 'Printstatus (JSON)',
+      states: {PREPARE: 'Voorbereiden', RUNNING: 'Printen', PAUSE: 'Gepauzeerd', FINISH: 'Klaar', FAILED: 'Gestopt',
+        IDLE: 'Printer in rust', SLICING: 'Slicen'},
+      stages: {1: 'Bed nivelleren', 2: 'Bed opwarmen', 4: 'Filament wisselen', 6: 'Filament op',
+        7: 'Nozzle opwarmen', 8: 'Extrusie kalibreren', 9: 'Bed scannen', 10: 'Eerste laag controleren',
+        13: 'Naar startpositie', 14: 'Nozzle reinigen', 16: 'Gepauzeerd op de printer', 22: 'Filament uitvoeren',
+        24: 'Filament invoeren', 29: 'Kamer koelen'},
+      layer: function (a, b) { return 'Laag ' + a + ' / ' + b; },
+      ready: function (day, time) { return 'Klaar ' + (day ? day + ' ' : 'om ') + time; },
+      tomorrow: 'morgen',
+      days: ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'],
+      left: function (h, m) { return 'nog ' + (h ? h + ' u ' : '') + m + ' min'; },
+      almostDone: 'Bijna klaar',
+      nozzle: 'Nozzle',
+      nozzles: 'Nozzles',
+      bed: 'Bed',
+      chamber: 'Kamer',
+      external: 'Ext',
+      off: 'Uit',
+      humidity: function (h) { return h + '% RV'; },
+      checkPrinter: 'De printer vraagt aandacht: kijk op het scherm',
+      statusHints: {connecting: 'verbinden met de printer', auth: 'de printer weigert de toegangscode',
+        unreachable: 'printer niet bereikbaar', refused: 'de printer weigert de verbinding',
+        serial: 'serienummer van de printer onbekend', protocol: 'onverwacht antwoord van de printer',
+        service: 'niet beschikbaar (statusdienst draait niet)'}
     }
   };
   var L = STR[LANG] || STR.en;
@@ -986,11 +1198,26 @@
         row.appendChild(a);
       });
 
+    text('status-label', T('printInfo'));
+    var statusRow = document.getElementById('status-modes');
+    [['auto', T('auto')], ['always', T('always')], ['off', T('off')]].forEach(function (item) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.setAttribute('data-mode', item[0]);
+      button.textContent = item[1];
+      button.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        setStatusMode(item[0]);
+      });
+      statusRow.appendChild(button);
+    });
+
     var apps = document.getElementById('apps');
     [
       [T('appRtsp'), 'rtsp://' + location.hostname + ':8554/' + CAM],
       [T('appHls'), apiURL('api/stream.m3u8?src=' + SRC + '&mp4')],
-      [T('appSnap'), apiURL('api/frame.jpeg?src=' + CAM)]
+      [T('appSnap'), apiURL('api/frame.jpeg?src=' + CAM)],
+      [T('appStatus'), STATUS_URL]
     ].forEach(function (app) {
       var line = document.createElement('div');
       line.className = 'app';
@@ -1049,6 +1276,290 @@
     });
   });
 
+  // ---------------------------------------------------------------- status
+
+  // Print progress, temperatures and the AMS from the bambu-tv-status service
+  // on this machine (read-only, its own port), polled every 2 s while shown.
+  // Auto: the card comes up when the page opens, every 10 %, on a state change
+  // and on a remote press; in between a small pill keeps progress and time.
+  var STATUS_URL = location.protocol + '//' + location.hostname + ':' +
+    (params.get('statusport') || '1985') + '/status.json';
+  var STATUS_POLL = 2000, STATUS_SHOW = 15000, STATUS_DIM = 10 * 60 * 1000;
+  var statusMode = 'auto';
+  try { statusMode = localStorage.getItem('bambootv.status') || 'auto'; } catch (e) { /* private mode */ }
+  if (['auto', 'always', 'off'].indexOf(statusMode) < 0) statusMode = 'auto';
+  var jobEl = document.getElementById('job');
+  var pillEl = document.getElementById('pill');
+  var printStatus = null, statusTimer = 0, statusFailures = 0, statusShown = '';
+  var lastState = '', lastTenth = -1, expanded = false, expandTimer = 0, menuOpen = false;
+  var statusDriftTimer = 0, statusDimTimer = 0, amsKey = '';
+
+  // A mark whose four layers fill up with the print, hotend on the current one.
+  function progressMark(svg) {
+    var layers = [].slice.call(svg.querySelectorAll('.layer')).map(function (el) {
+      var m = el.getAttribute('d').match(/M([\d.]+) ([\d.]+)H([\d.]+)/);
+      return {el: el, from: +m[1], y: +m[2], to: +m[3], len: Math.abs(m[3] - m[1])};
+    });
+    var headEl = svg.querySelector('.head');
+    return function (p) {
+      var f = Math.max(0, Math.min(1, p)) * layers.length;
+      var x = layers[0].from, y = layers[0].y;
+      layers.forEach(function (l, i) {
+        var q = Math.max(0, Math.min(1, f - i));
+        drawLayer(l, q);
+        if (q > 0) { x = l.from + (l.to - l.from) * q; y = l.y; }
+      });
+      headEl.setAttribute('transform', 'translate(' + (x - 42).toFixed(2) + ' ' + (y - 30).toFixed(2) + ')');
+    };
+  }
+  var drawJobMark = progressMark(jobEl.querySelector('.mark'));
+  var drawPillMark = progressMark(pillEl.querySelector('.mark'));
+
+  function pollStatus() {
+    clearTimeout(statusTimer);
+    if (statusMode === 'off' || document.hidden) return;
+    var xhr = new XMLHttpRequest(), done = false;
+    function finish(data) {
+      if (done) return;
+      done = true;
+      onStatus(data);
+    }
+    xhr.open('GET', STATUS_URL, true);
+    xhr.timeout = 5000;
+    xhr.onload = function () {
+      var data = null;
+      try { data = xhr.status === 200 ? JSON.parse(xhr.responseText) : null; } catch (e) { /* not our service */ }
+      finish(data && data.feed ? data : null);
+    };
+    xhr.onerror = xhr.ontimeout = function () { finish(null); };
+    xhr.send();
+  }
+
+  function onStatus(data) {
+    printStatus = data;
+    statusFailures = data ? 0 : statusFailures + 1;
+    renderStatus();
+    if (statusMode !== 'off') {
+      statusTimer = setTimeout(pollStatus, data ? STATUS_POLL : Math.min(30000, 2000 * Math.pow(2, statusFailures)));
+    }
+  }
+
+  function liveJob() {
+    return statusMode !== 'off' && printStatus && printStatus.feed === 'live' && printStatus.job ? printStatus.job : null;
+  }
+
+  function renderStatus() {
+    renderStatusRow();
+    var job = liveJob();
+    if (job) {
+      var tenth = Math.floor(job.percent / 10);
+      if (job.state !== 'IDLE' && (job.state !== lastState || (job.state === 'RUNNING' && tenth !== lastTenth))) expand();
+      lastState = job.state;
+      lastTenth = tenth;
+      fillJob(job);
+    }
+    placeStatus();
+  }
+
+  function expand() {
+    expanded = true;
+    clearTimeout(expandTimer);
+    expandTimer = setTimeout(function () { expanded = false; placeStatus(); }, STATUS_SHOW);
+  }
+
+  function placeStatus() {
+    var job = liveJob(), show = '';
+    if (job) {
+      var busy = job.state !== 'IDLE';
+      if (statusMode === 'always' || menuOpen || (busy && expanded)) show = 'card';
+      else if (busy) show = 'pill';
+    }
+    jobEl.classList.toggle('show', show === 'card');
+    pillEl.classList.toggle('show', show === 'pill');
+    document.body.classList.toggle('job-on', show === 'card');
+    if (show !== statusShown) {
+      statusShown = show;
+      careForStatus();
+    }
+  }
+
+  // OLED care, like the offline slate: drift a little every minute and dim
+  // after ten minutes without a remote press.
+  function careForStatus() {
+    clearInterval(statusDriftTimer);
+    jobEl.style.transform = pillEl.style.transform = '';
+    if (statusShown) {
+      statusDriftTimer = setInterval(function () {
+        jobEl.style.transform = pillEl.style.transform = 'translate(' + (Math.random() * 1.2 - 0.6).toFixed(2) +
+          'vw, ' + (Math.random() * 1.6 - 0.8).toFixed(2) + 'vh)';
+      }, 60000);
+    }
+    undimStatus();
+  }
+
+  function undimStatus() {
+    document.body.classList.remove('status-dim');
+    clearTimeout(statusDimTimer);
+    statusDimTimer = setTimeout(function () { document.body.classList.add('status-dim'); }, STATUS_DIM);
+  }
+
+  function clockText(date) {
+    try {
+      return date.toLocaleTimeString(LANG === 'nl' ? 'nl-NL' : undefined, {hour: 'numeric', minute: '2-digit'});
+    } catch (e) {
+      return (date.getHours() < 10 ? '0' : '') + date.getHours() + ':' + (date.getMinutes() < 10 ? '0' : '') + date.getMinutes();
+    }
+  }
+
+  // [ready line, time-left line, short ready time for the pill]
+  function timeLeft(job) {
+    if (job.state !== 'RUNNING' && job.state !== 'PREPARE' && job.state !== 'PAUSE') return ['', '', ''];
+    if (!job.remaining) return [job.state === 'RUNNING' ? T('almostDone') : '', '', ''];
+    var left = L.left(Math.floor(job.remaining / 60), job.remaining % 60);
+    if (job.state === 'PAUSE') return ['', left, ''];
+    var at = new Date(Date.now() + job.remaining * 60000), now = new Date();
+    var days = Math.round((new Date(at.getFullYear(), at.getMonth(), at.getDate()) -
+      new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    var day = days === 0 ? '' : days === 1 ? T('tomorrow') : L.days[at.getDay()];
+    var time = clockText(at);
+    return [L.ready(day, time), left, (day ? day + ' ' : '') + time];
+  }
+
+  function fillJob(job) {
+    var progress = job.state === 'FINISH' ? 100 : job.percent;
+    var stage = job.stage > 0 && L.stages[job.stage];
+    var detail = stage || (job.layers && (job.state === 'RUNNING' || job.state === 'PAUSE') ? L.layer(job.layer, job.layers) : '');
+    var eta = timeLeft(job);
+    jobEl.setAttribute('data-state', job.state);
+    jobEl.classList.toggle('no-job', job.state === 'IDLE');
+    text('job-state', (L.states[job.state] || job.state) + (detail ? ' · ' + detail : ''));
+    text('job-name', job.name);
+    text('job-pct', String(progress));
+    text('job-ready', eta[0]);
+    text('job-left', eta[1]);
+    document.getElementById('job-bar').style.width = progress + '%';
+    text('job-alert', job.alerts && (job.state === 'PAUSE' || job.state === 'FAILED') ? T('checkPrinter') : '');
+    drawJobMark(progress / 100);
+    drawPillMark(progress / 100);
+    text('pill-pct', progress + '%');
+    text('pill-eta', job.state === 'RUNNING' || job.state === 'PREPARE' ? eta[2] : L.states[job.state] || '');
+    fillTemps(printStatus.temps || {});
+    fillAms(printStatus.ams || {});
+  }
+
+  function tempInto(id, t, others) {
+    var el = document.getElementById(id);
+    el.textContent = t ? t.temp + '°' : '–';
+    if (t && t.target > 0 && Math.abs(t.target - t.temp) > 3) {
+      var aim = document.createElement('span');
+      aim.className = 'aim';
+      aim.textContent = '→ ' + t.target + '°';
+      el.appendChild(aim);
+    }
+    (others || []).forEach(function (o) {
+      var other = document.createElement('span');
+      other.className = 'other';
+      other.textContent = o.temp + '°';
+      el.appendChild(other);
+    });
+  }
+
+  function fillTemps(temps) {
+    var nozzles = temps.nozzles || [];
+    var main = nozzles.filter(function (n) { return n.active; })[0] || nozzles[0];
+    text('t-nozzle-label', nozzles.length > 1 ? T('nozzles') : T('nozzle'));
+    tempInto('t-nozzle', main, nozzles.filter(function (n) { return n !== main; }));
+    text('t-bed-label', T('bed'));
+    tempInto('t-bed', temps.bed);
+    document.getElementById('t-chamber-cell').hidden = !temps.chamber;
+    text('t-chamber-label', T('chamber'));
+    if (temps.chamber) tempInto('t-chamber', temps.chamber);
+  }
+
+  function isDark(hex) {
+    var n = parseInt(hex.slice(1), 16);
+    return 0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255) < 60;
+  }
+
+  function spool(tray) {
+    var el = document.createElement('i');
+    var c = tray.colors || [];
+    el.className = 'spool' + (tray.empty ? ' empty' : c.length ? '' : ' unknown') + (tray.active ? ' active' : '') +
+      (c.length && c.every(isDark) ? ' dark' : '');
+    if (c.length === 1) {
+      el.style.background = c[0];
+    } else if (c.length > 1) {  // multicolour filament: one band per colour
+      el.style.background = 'linear-gradient(135deg, ' + c.map(function (col, i) {
+        return col + ' ' + (i * 100 / c.length).toFixed(1) + '%, ' + col + ' ' + ((i + 1) * 100 / c.length).toFixed(1) + '%';
+      }).join(', ') + ')';
+    }
+    return el;
+  }
+
+  function addTo(box, cls, value) {
+    var el = document.createElement('span');
+    el.className = cls;
+    el.textContent = value;
+    box.appendChild(el);
+  }
+
+  function fillAms(ams) {
+    var key = JSON.stringify(ams);
+    if (key === amsKey) return;
+    amsKey = key;
+    var box = document.getElementById('job-ams');
+    while (box.firstChild) box.removeChild(box.firstChild);
+    var units = ams.units || [], external = ams.external || [];
+    if (!units.length && !external.length) return;
+    var active = null, env = units[0];
+    addTo(box, 'job-label', units.length ? 'AMS' : T('external'));
+    units.forEach(function (unit, i) {
+      if (i) addTo(box, 'ams-gap', '');
+      unit.trays.forEach(function (tray) {
+        box.appendChild(spool(tray));
+        if (tray.active) { active = tray; env = unit; }
+      });
+    });
+    if (units.length && external.length) addTo(box, 'job-label', T('external'));
+    external.forEach(function (tray) {
+      box.appendChild(spool(tray));
+      if (tray.active) active = tray;
+    });
+    if (active) addTo(box, 'ams-name', active.name);
+    if (env) {
+      var parts = [];
+      if (env.humidity !== null && env.humidity !== undefined) parts.push(L.humidity(env.humidity));
+      if (env.temp !== null && env.temp !== undefined) parts.push(Math.round(env.temp) + '°');
+      if (parts.length) addTo(box, 'ams-env', parts.join(' · '));
+    }
+  }
+
+  function renderStatusRow() {
+    [].slice.call(document.querySelectorAll('#status-modes button')).forEach(function (b) {
+      b.className = b.getAttribute('data-mode') === statusMode ? 'active' : '';
+    });
+    var hint = '';
+    if (statusMode !== 'off') {
+      if (!printStatus) hint = statusFailures ? L.statusHints.service : '';
+      else if (printStatus.feed === 'error') hint = L.statusHints[printStatus.error] || L.statusHints.protocol;
+      else if (printStatus.feed !== 'live') hint = L.statusHints.connecting;
+    }
+    text('status-hint', hint);
+  }
+
+  function setStatusMode(next) {
+    statusMode = next;
+    try { localStorage.setItem('bambootv.status', next); } catch (e) { /* private mode */ }
+    if (next === 'off') {
+      clearTimeout(statusTimer);
+      printStatus = null;
+      statusFailures = 0;
+    } else {
+      pollStatus();
+    }
+    renderStatus();
+  }
+
   var idleTimer = 0;
 
   function wake() {
@@ -1058,11 +1569,16 @@
     text('now', L.now(mode().toUpperCase()));
     panelEl.hidden = false;
     if (view === 'live') flashBug();
+    menuOpen = true;
+    placeStatus();
+    undimStatus();
     clearTimeout(idleTimer);
     idleTimer = setTimeout(function () {
       b.add('idle');
       b.remove('menu');
       panelEl.hidden = true;
+      menuOpen = false;
+      placeStatus();
     }, 8000);
     if (view === 'offline') {
       clearTimeout(dimTimer);
@@ -1074,19 +1590,23 @@
     document.addEventListener(type, wake, {passive: true});
   });
 
-  // Release the printer camera while the TV shows something else.
+  // Release the printer camera and status feed while the TV shows something else.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       clearTimeout(retryTimer);
       clearInterval(countdownTimer);
+      clearTimeout(statusTimer);
       stopSession();
     } else {
       start();
+      pollStatus();
     }
   });
 
   buildPanel();
   start();
+  renderStatusRow();
+  pollStatus();
 })();
 </script>
 </body>

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Checks a running bambooTV end to end: TV page, snapshot, MJPEG, HLS, RTSP,
-# the optional DLNA server (found the way a TV finds it), and that go2rtc's
-# admin endpoints are not reachable.
+# the print status, the optional DLNA server (found the way a TV finds it),
+# and that go2rtc's admin endpoints are not reachable.
 #
-#   dev/smoke-test.sh [http://HOST:1984] [RTSP_PORT] [DLNA_PORT]
+#   dev/smoke-test.sh [http://HOST:1984] [RTSP_PORT] [DLNA_PORT] [STATUS_PORT]
 #
 # Needs curl, ffprobe and python3. Exits non-zero when a check fails.
 set -uo pipefail
@@ -13,6 +13,7 @@ BASE=${BASE%/}
 HOST=$(sed -E 's#^https?://([^/:]+).*#\1#' <<<"$BASE")
 RTSP_PORT=${2:-8554}
 DLNA_PORT=${3:-49499}
+STATUS_PORT=${4:-1985}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 FAILED=0
@@ -74,6 +75,37 @@ if [[ -n $info ]]; then
   ok "rtsp ($info)"
 else
   fail "rtsp (rtsp://$HOST:$RTSP_PORT/x2d)"
+fi
+
+# Print status: the TV page reads it from another port, so it must allow that
+# (CORS). The service connects to the printer on the first request.
+status=$(python3 -I - "$HOST" "$STATUS_PORT" <<'PY'
+import json, sys, time, urllib.request
+url = "http://%s:%s/status.json" % (sys.argv[1], sys.argv[2])
+data, cors, end = {}, "", time.time() + 15
+while time.time() < end:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as reply:
+            data, cors = json.load(reply), reply.headers.get("Access-Control-Allow-Origin", "")
+    except OSError:
+        print("MISSING"); sys.exit()
+    if data.get("feed") in ("live", "error"):
+        break
+    time.sleep(1)
+job = data.get("job") or {}
+print(data.get("feed"), cors or "-", data.get("error", "-"), job.get("state", "-"), job.get("percent", "-"),
+      len(((data.get("ams") or {}).get("units")) or []))
+PY
+)
+if [[ $status == MISSING ]]; then
+  ok "status: not installed (skipped)"
+else
+  read -r feed cors error state percent units <<<"$status"
+  if [[ $feed == live && $cors == '*' ]]; then
+    ok "status: printer feed live ($state $percent %, AMS units: $units)"
+  else
+    fail "status: feed $feed, error $error, CORS $cors (http://$HOST:$STATUS_PORT/status.json)"
+  fi
 fi
 
 # DLNA (optional). Discovered like a TV does it: multicast M-SEARCH, then the

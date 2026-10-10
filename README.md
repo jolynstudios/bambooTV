@@ -21,6 +21,9 @@ company.
 ## What you get
 
 - **Live 1080p in the TV's web browser**, with well under a second of delay.
+- **Print info on screen**: progress, time left, layer, nozzle, bed and
+  chamber temperatures, and the AMS spools in their real colours, as a card
+  over the picture. The bambooTV logo prints itself along with your print.
 - **Appears on your TV by itself**: bambooTV announces itself on the network
   (DLNA), so Samsung and other DLNA-capable TVs list it under their connected
   devices, with its own icon and a live thumbnail of the print.
@@ -33,9 +36,14 @@ company.
   thing to fix.
 - **OLED-friendly**: on-screen elements fade out; the "no picture" screen
   drifts and dims.
-- **Locked down**: only playback is reachable on your network, services run in
-  a systemd sandbox, the streaming engine is pinned and checksum-verified.
+- **Locked down**: only playback and print info are reachable on your network,
+  bambooTV only reads from the printer, services run in a systemd sandbox, and
+  the streaming engine is pinned and checksum-verified.
 - **English and Dutch** on the TV.
+
+<p align="center">
+  <img src="docs/img/status.jpeg" alt="Print info over the live picture: progress, time left, temperatures and the AMS" width="900">
+</p>
 
 <p align="center">
   <img src="docs/img/connecting.jpeg" alt="Connecting: the logo prints itself" width="440">
@@ -94,15 +102,15 @@ shell history), then:
 1. checks that the printer's camera answers,
 2. installs ffmpeg and python3 if they're missing,
 3. downloads go2rtc 1.9.14 and verifies its checksum,
-4. starts two services, `bambu-tv` (streaming) and `bambu-tv-dlna` (TV
-   discovery), and
+4. starts the services `bambu-tv` (streaming), `bambu-tv-status` (print
+   info) and `bambu-tv-dlna` (TV discovery), and
 5. prints the addresses to use.
 
 Leave out `--with-dlna` if you only want the web page, and `--radio on` if you
 don't want music. Everything can be changed later.
 
 **Firewall?** If `ufw` or `firewalld` is active, the installer prints the exact
-command that opens the ports (TCP 1984, 8554, 49499 and UDP 1900).
+command that opens the ports (TCP 1984, 1985, 8554, 49499 and UDP 1900).
 
 ## Step 3 — Watch on your TV
 
@@ -127,6 +135,10 @@ Move the cursor or press **OK** on the remote to open the menu:
 - **Sound** — browsers start videos muted, so press **On** once to hear the
   radio. Your choice is remembered, and from then on any press of OK brings
   the sound back.
+- **Print info** — *Auto* shows the card when you open the page, every 10 %,
+  when the print pauses or finishes, and whenever you press a button; in
+  between, a small tag keeps the progress and the ready time. *Always* keeps
+  the card up, *Off* hides it.
 
 **Other devices:** any browser on your laptop, phone or tablet works the same
 way. For apps, see [Other apps](#other-apps).
@@ -168,6 +180,8 @@ sudo systemctl restart bambu-tv bambu-tv-dlna
 | `--lan-ip IP` | `DLNA_LAN_IP` | fixed address to advertise via DLNA | automatic |
 | `--radio on\|off` | — | background radio | off |
 | `--radio-url URL` | `RADIO_URL` | radio station stream | 181.FM Power 181 |
+| `--status on\|off` | — | print info on the TV page | on |
+| `--status-port PORT` | `STATUS_PORT` | port of the print info service | `1985` |
 | — | `RTSP_USER`, `RTSP_PASS` | require a login for RTSP apps | open |
 
 ## Other apps
@@ -178,15 +192,16 @@ sudo systemctl restart bambu-tv bambu-tv-dlna
 | IPTV apps, Safari, VLC (HLS, with the radio when it's on) | `http://<linux-machine-ip>:1984/api/stream.m3u8?src=tv&mp4` |
 | MJPEG (old browsers, dashboards) | `http://<linux-machine-ip>:1984/api/stream.mjpeg?src=x2d_mjpeg` |
 | Snapshot (JPEG) | `http://<linux-machine-ip>:1984/api/frame.jpeg?src=x2d` |
+| Print status (JSON: progress, temperatures, AMS) | `http://<linux-machine-ip>:1985/status.json` |
 
 TV page options: `?mode=mse|hls|mjpeg` forces a playback mode, `?lang=nl`
-switches to Dutch.
+switches to Dutch, `?statusport=PORT` follows a changed print info port.
 
 ## Docker
 
 ```bash
 cp bambu-tv.env.example bambu-tv.env   # fill in PRINTER_IP and ACCESS_CODE
-docker compose up -d                   # TV page on port 1984
+docker compose up -d                   # TV page on port 1984, print info on 1985
 docker compose --profile dlna up -d    # plus TV discovery (DLNA)
 ```
 
@@ -212,31 +227,38 @@ sudo ./install.sh --uninstall --purge          # remove everything
 | bambooTV isn't under *Connected devices* | Install with `--with-dlna`. With a firewall, allow UDP 1900 and TCP 49499. Make sure the TV and the Linux machine are on the same network (not a guest network). |
 | The page loads but stays black | Open the menu and choose **MJPEG**. |
 | No sound in the browser | Open the menu and press **Sound → On**. Is the radio switched on (`--radio on`)? |
+| No print info on the TV page | Open the menu: the *Print info* row says what's wrong, for example a rejected access code. Switched off? `sudo ./install.sh --status on`. With a firewall, allow TCP 1985. |
 
-Logs: `journalctl -u bambu-tv -f` and `journalctl -u bambu-tv-dlna -f`.
+Logs: `journalctl -u bambu-tv -f`, `journalctl -u bambu-tv-status -f` and
+`journalctl -u bambu-tv-dlna -f`.
 Full check from any machine: `dev/smoke-test.sh http://<linux-machine-ip>:1984`.
 
 ## Security
 
 The picture is open on your **home network** on purpose: a TV can't log in.
 Everything else is closed: go2rtc's admin API, config editor and scripting
-features are not exposed, both services run as throwaway users in a read-only
-systemd sandbox, and the access code never appears in logs or in the DLNA
-service. Don't expose these ports to the internet; for viewing away from
+features are not exposed, and all services run as throwaway users in a
+read-only systemd sandbox. The print info only listens to the printer's status
+feed; it never sends the printer a command. The access code never appears in
+logs, in the print info or in the DLNA service. Don't expose these ports to the internet; for viewing away from
 home, use a VPN such as WireGuard or Tailscale. Details: [docs/TECHNICAL.md](docs/TECHNICAL.md).
 
 ## Testing without a printer
 
 ```bash
-dev/fake-printer.sh a1b2c3d4            # terminal 1: simulated X2D camera (needs mediamtx + ffmpeg)
+dev/fake-printer.sh a1b2c3d4            # terminal 1: simulated X2D camera and status feed (needs mediamtx + ffmpeg)
 PRINTER_IP=127.0.0.1 ACCESS_CODE=a1b2c3d4 WEB_DIR=$PWD/web \
   go2rtc -config config/go2rtc.yaml     # terminal 2
-dev/smoke-test.sh http://127.0.0.1:1984 # terminal 3: end-to-end check
+PRINTER_IP=127.0.0.1 ACCESS_CODE=a1b2c3d4 \
+  python3 status/bambu_tv_status.py     # terminal 3
+dev/smoke-test.sh http://127.0.0.1:1984 # terminal 4: end-to-end check
 ```
 
 ## Credits
 
-Built on [go2rtc](https://github.com/AlexxIT/go2rtc) (MIT). The TV page uses
+Built on [go2rtc](https://github.com/AlexxIT/go2rtc) (MIT). The print info
+reads the printer's local status feed (MQTT), the one Bambu Studio uses in LAN
+mode. The TV page uses
 the [Archivo](https://github.com/Omnibus-Type/Archivo) typeface (OFL). See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 

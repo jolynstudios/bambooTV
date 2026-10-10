@@ -6,9 +6,10 @@
 #   sudo ./install.sh --uninstall [--purge]
 #
 # Installs go2rtc (pinned release, SHA-256 verified) as the systemd service
-# "bambu-tv" together with the TV page and a locked-down configuration, and
-# optionally the built-in DLNA server "bambu-tv-dlna" so TVs list the stream
-# under their connected devices, and an optional background radio station.
+# "bambu-tv" together with the TV page and a locked-down configuration, the
+# print status service "bambu-tv-status" (progress, temperatures and AMS on the
+# TV page), optionally the built-in DLNA server "bambu-tv-dlna" so TVs list the
+# stream under their connected devices, and an optional background radio station.
 # Re-running it upgrades the files and keeps the saved settings. It only touches its own units, /opt/bambu-tv and
 # /etc/bambu-tv.
 set -euo pipefail
@@ -28,6 +29,7 @@ ENV_FILE=$CONF_DIR/bambu-tv.env
 DLNA_ENV_FILE=$CONF_DIR/dlna.env
 UNIT_FILE=/etc/systemd/system/bambu-tv.service
 DLNA_UNIT_FILE=/etc/systemd/system/bambu-tv-dlna.service
+STATUS_UNIT_FILE=/etc/systemd/system/bambu-tv-status.service
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEFAULT_RADIO_URL=https://listen.181fm.com/181-power_128k.mp3  # 181.FM Power 181 (US Top 40)
 PAGE_MARKER='<meta name="application-name" content="bambooTV">'
@@ -37,6 +39,7 @@ ACCESS_CODE=${ACCESS_CODE:-}
 HTTP_PORT=${HTTP_PORT:-}
 RTSP_PORT=${RTSP_PORT:-}
 DLNA_PORT=${DLNA_PORT:-}
+STATUS_PORT=${STATUS_PORT:-}
 DLNA_IP=${DLNA_LAN_IP:-}
 RADIO_URL=${RADIO_URL:-}
 SKIP_FFMPEG=false
@@ -44,6 +47,7 @@ UNINSTALL=false
 PURGE=false
 WITH_DLNA=""     # "", true, false; "" = keep the current choice
 RADIO=""         # "", on, off;      "" = keep the current choice
+STATUS=""        # "", on, off;      "" = keep the current choice (on by default)
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -67,6 +71,9 @@ Usage: sudo ./install.sh [options]
   --radio on|off         background radio on or off (default station:
                          181.FM Power 181, US Top 40)
   --radio-url URL        your own station (MP3/AAC stream URL); turns the radio on
+  --status on|off        print progress, temperatures and AMS on the TV page
+                         (default on)
+  --status-port PORT     port of the print status service (default 1985)
   --uninstall            remove bambooTV
   --purge                with --uninstall: also remove the settings
   -h, --help             this help
@@ -85,6 +92,8 @@ while [[ $# -gt 0 ]]; do
     --lan-ip)       DLNA_IP=${2:?}; shift 2 ;;
     --radio)        RADIO=${2:?}; shift 2 ;;
     --radio-url)    RADIO_URL=${2:?}; RADIO=on; shift 2 ;;
+    --status)       STATUS=${2:?}; shift 2 ;;
+    --status-port)  STATUS_PORT=${2:?}; shift 2 ;;
     --uninstall)    UNINSTALL=true; shift ;;
     --purge)        PURGE=true; shift ;;
     -h|--help)      usage; exit 0 ;;
@@ -100,8 +109,9 @@ done
 if $UNINSTALL; then
   step "Removing bambooTV"
   systemctl disable --now bambu-tv-dlna.service 2>/dev/null || true
+  systemctl disable --now bambu-tv-status.service 2>/dev/null || true
   systemctl disable --now bambu-tv.service 2>/dev/null || true
-  rm -f "$UNIT_FILE" "$DLNA_UNIT_FILE"
+  rm -f "$UNIT_FILE" "$DLNA_UNIT_FILE" "$STATUS_UNIT_FILE"
   systemctl daemon-reload
   rm -rf "$PREFIX"
   if $PURGE; then
@@ -128,6 +138,7 @@ if [[ -f $ENV_FILE ]]; then
   HTTP_PORT=${HTTP_PORT:-${SAVED[HTTP_PORT]:-}}
   RTSP_PORT=${RTSP_PORT:-${SAVED[RTSP_PORT]:-}}
   DLNA_PORT=${DLNA_PORT:-${SAVED[DLNA_PORT]:-}}
+  STATUS_PORT=${STATUS_PORT:-${SAVED[STATUS_PORT]:-}}
   DLNA_IP=${DLNA_IP:-${SAVED[DLNA_LAN_IP]:-}}
   RADIO_URL=${RADIO_URL:-${SAVED[RADIO_URL]:-}}
 fi
@@ -140,6 +151,9 @@ if [[ -z $RADIO ]]; then
   if [[ -f $PREFIX/radio.yaml ]]; then RADIO=on; else RADIO=off; fi
 fi
 [[ $RADIO == on || $RADIO == off ]] || die "--radio expects on or off"
+# Print status is on unless it was switched off (saved as STATUS=off).
+[[ -n $STATUS ]] || { [[ ${SAVED[STATUS]:-} == off ]] && STATUS=off || STATUS=on; }
+[[ $STATUS == on || $STATUS == off ]] || die "--status expects on or off"
 [[ $RADIO == off ]] || RADIO_URL=${RADIO_URL:-$DEFAULT_RADIO_URL}
 # No spaces, quotes, '#' or '$': the URL ends up inside a go2rtc source string.
 URL_RE='^https?://[A-Za-z0-9._~:/?&=%+,;@!-]+$'
@@ -166,13 +180,14 @@ fi
 [[ $ACCESS_CODE =~ ^[A-Za-z0-9]{4,32}$ ]] || die "the access code may only contain letters and digits"
 [[ -z $DLNA_IP || $DLNA_IP =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "invalid --lan-ip: $DLNA_IP"
 # The services run without privileges, so ports below 1024 are not possible.
-for port in "$HTTP_PORT" "$RTSP_PORT" "$DLNA_PORT"; do
+for port in "$HTTP_PORT" "$RTSP_PORT" "$DLNA_PORT" "$STATUS_PORT"; do
   [[ -z $port ]] || { [[ $port =~ ^[0-9]+$ ]] && ((port >= 1024 && port <= 65535)); } ||
     die "invalid port: $port (choose 1024 to 65535)"
 done
 PORT=${HTTP_PORT:-1984}
 RPORT=${RTSP_PORT:-8554}
 DPORT=${DLNA_PORT:-49499}
+SPORT=${STATUS_PORT:-1985}
 
 # --------------------------------------------------------------------- checks
 
@@ -219,6 +234,13 @@ tv_page_ok() {
   [[ $page == *"$PAGE_MARKER"* ]]
 }
 
+# True when the print status service answers with its JSON.
+status_ok() {
+  local reply
+  reply=$(http_get "http://127.0.0.1:$SPORT/status.json") || return 1
+  [[ $reply == *'"feed":'* ]]
+}
+
 # True when the DLNA server answers and introduces itself as bambooTV.
 dlna_ok() {
   local desc
@@ -255,11 +277,15 @@ if [[ $RADIO == on ]] && ! command -v ffmpeg >/dev/null 2>&1; then
   die "the radio needs ffmpeg; run the installer without --skip-ffmpeg"
 fi
 
+if [[ $WITH_DLNA == true || $STATUS == on ]] && ! command -v python3 >/dev/null 2>&1; then
+  step "Installing python3 (for print status and DLNA)"
+  install_pkg python3 || true
+fi
+if [[ $STATUS == on ]] && ! command -v python3 >/dev/null 2>&1; then
+  warn "python3 is missing: no print status on the TV page (switch it off with --status off)."
+  STATUS=off
+fi
 if [[ $WITH_DLNA == true ]]; then
-  if ! command -v python3 >/dev/null 2>&1; then
-    step "Installing python3 (for DLNA)"
-    install_pkg python3 || true
-  fi
   command -v python3 >/dev/null 2>&1 || die "DLNA needs python3, which could not be installed"
   command -v ffmpeg >/dev/null 2>&1 || die "DLNA needs ffmpeg; run the installer without --skip-ffmpeg"
 fi
@@ -298,17 +324,19 @@ install -d -m 0700 "$CONF_DIR"
 (
   umask 077
   {
-    echo "# bambooTV settings. After editing: sudo systemctl restart bambu-tv bambu-tv-dlna"
+    echo "# bambooTV settings. After editing: sudo systemctl restart bambu-tv bambu-tv-status bambu-tv-dlna"
     echo "PRINTER_IP=$PRINTER_IP"
     echo "ACCESS_CODE=$ACCESS_CODE"
     [[ -z $HTTP_PORT ]] || echo "HTTP_PORT=$HTTP_PORT"
     [[ -z $RTSP_PORT ]] || echo "RTSP_PORT=$RTSP_PORT"
     [[ -z $DLNA_PORT ]] || echo "DLNA_PORT=$DLNA_PORT"
+    [[ -z $STATUS_PORT ]] || echo "STATUS_PORT=$STATUS_PORT"
+    [[ $STATUS == on ]] || echo "STATUS=off"
     [[ -z $DLNA_IP ]] || echo "DLNA_LAN_IP=$DLNA_IP"
     [[ -z $RADIO_URL ]] || echo "RADIO_URL=$RADIO_URL"
     # keep anything else the user added (e.g. RTSP_USER / RTSP_PASS)
     if [[ -f $ENV_FILE ]]; then
-      grep -Ev '^(#|PRINTER_IP=|ACCESS_CODE=|HTTP_PORT=|RTSP_PORT=|DLNA_PORT=|DLNA_LAN_IP=|RADIO_URL=)' "$ENV_FILE" |
+      grep -Ev '^(#|PRINTER_IP=|ACCESS_CODE=|HTTP_PORT=|RTSP_PORT=|DLNA_PORT=|STATUS_PORT=|STATUS=|DLNA_LAN_IP=|RADIO_URL=)' "$ENV_FILE" |
         grep -E '^[A-Z_][A-Z0-9_]*=' || true
     fi
   } >"$ENV_FILE.new"
@@ -332,6 +360,29 @@ tv_page_ok "http://127.0.0.1:$PORT/" ||
 HOST_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}' || true)
 [[ -n $HOST_IP ]] || HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 [[ -n $HOST_IP ]] || HOST_IP="<this-computer-ip>"
+
+# --------------------------------------------------------------------- status
+
+if [[ $STATUS == on ]]; then
+  step "Starting print status (progress, temperatures and AMS on the TV page)"
+  install -d -m 0755 "$PREFIX/status"
+  install -m 0644 "$HERE/status/bambu_tv_status.py" "$PREFIX/status/bambu_tv_status.py"
+  install -m 0644 "$HERE/systemd/bambu-tv-status.service" "$STATUS_UNIT_FILE"
+  systemctl daemon-reload
+  systemctl enable --quiet bambu-tv-status.service
+  systemctl restart bambu-tv-status.service
+  for _ in $(seq 1 20); do
+    status_ok && break
+    sleep 0.5
+  done
+  status_ok || die "the print status service does not answer on port $SPORT. Is another program using it? Then pick another port with --status-port. Logs: journalctl -u bambu-tv-status -n 50"
+elif [[ -f $STATUS_UNIT_FILE ]]; then
+  step "Switching print status off"
+  systemctl disable --now bambu-tv-status.service 2>/dev/null || true
+  rm -f "$STATUS_UNIT_FILE"
+  rm -rf "$PREFIX/status"
+  systemctl daemon-reload
+fi
 
 # ----------------------------------------------------------------------- dlna
 
@@ -368,12 +419,15 @@ elif [[ -f $DLNA_UNIT_FILE ]]; then
   systemctl daemon-reload
 fi
 
+PAGE_QUERY=""
+[[ $STATUS == off || $SPORT == 1985 ]] || PAGE_QUERY="?statusport=$SPORT"
+
 cat <<EOF
 
 bambooTV is running.
 
   On the TV:   open the web browser (Samsung: "Internet") and go to
-               http://$HOST_IP:$PORT/
+               http://$HOST_IP:$PORT/$PAGE_QUERY
 
   Other apps (VLC, IPTV apps, Home Assistant):
     HLS       http://$HOST_IP:$PORT/api/stream.m3u8?src=tv&mp4
@@ -389,6 +443,11 @@ if [[ $WITH_DLNA == true ]]; then
   say ''
   say '  DLNA:        TV → Source → Connected devices → "bambooTV" → "X2D live"'
 fi
+if [[ $STATUS == on ]]; then
+  say "  Print info:  on (progress, temperatures and AMS on the TV page)"
+else
+  say "  Print info:  off (switch on: sudo ./install.sh --status on)"
+fi
 if [[ $RADIO == on ]]; then
   say "  Radio:       on ($RADIO_URL)"
   say "               switch off: sudo ./install.sh --radio off"
@@ -398,6 +457,10 @@ fi
 
 FW_UFW="sudo ufw allow $PORT/tcp && sudo ufw allow $RPORT/tcp"
 FW_FWCMD="--add-port=$PORT/tcp --add-port=$RPORT/tcp"
+if [[ $STATUS == on ]]; then
+  FW_UFW+=" && sudo ufw allow $SPORT/tcp"
+  FW_FWCMD+=" --add-port=$SPORT/tcp"
+fi
 if [[ $WITH_DLNA == true ]]; then
   FW_UFW+=" && sudo ufw allow 1900/udp && sudo ufw allow $DPORT/tcp"
   FW_FWCMD+=" --add-port=1900/udp --add-port=$DPORT/tcp"

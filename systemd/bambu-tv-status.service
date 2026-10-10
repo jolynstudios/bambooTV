@@ -1,0 +1,38 @@
+[Unit]
+Description=bambooTV status: print progress, temperatures and AMS for the TV page
+Documentation=https://github.com/jolynstudios/bambooTV
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# Reads the printer's status feed with its IP and access code; read-only.
+EnvironmentFile=/etc/bambu-tv/bambu-tv.env
+ExecStart=/usr/bin/python3 -I /opt/bambu-tv/status/bambu_tv_status.py
+Restart=always
+RestartSec=5
+
+# Same sandbox as bambu-tv: throwaway user, read-only system, no capabilities.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
