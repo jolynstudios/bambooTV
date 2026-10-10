@@ -16,9 +16,13 @@ Standard library only (Python 3.9+). Settings come from the environment:
   STREAM       go2rtc stream to play                  (default "tv": camera + radio)
   CAM_STREAM   go2rtc camera stream for thumbnails    (default "x2d")
   HTTP_PORT    bambooTV web port (stream, thumbnail)  (default 1984)
+  STATUS_PORT  print status port (overlay text)       (default 1985)
+  OVERLAY      burn print progress into the picture   (default "on"; "off" = plain copy)
+  STATUS_TEXT  overlay text file                      (default /run/bambu-tv/status.txt)
 """
 
 import ipaddress
+import json
 import os
 import platform
 import random
@@ -30,6 +34,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -45,6 +50,9 @@ STREAM = os.environ.get("STREAM") or "tv"
 CAM_STREAM = os.environ.get("CAM_STREAM") or "x2d"
 TITLE = os.environ.get("DLNA_TITLE") or "X2D live"
 HTTP_PORT = int(os.environ.get("HTTP_PORT") or 1984)
+STATUS_PORT = int(os.environ.get("STATUS_PORT") or 1985)
+OVERLAY = (os.environ.get("OVERLAY") or "on") != "off"
+STATUS_TEXT = os.environ.get("STATUS_TEXT") or "/run/bambu-tv/status.txt"
 
 UDN = "uuid:" + str(uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname() + "/bambu-tv/" + NAME))
 SERVER = "Linux/%s UPnP/1.0 bambooTV/1.0" % platform.release()
@@ -67,6 +75,178 @@ MAX_STREAMS = threading.BoundedSemaphore(6)
 # Interfaces that never lead to a TV: container bridges and tunnels.
 VIRTUAL = re.compile(r"^(docker|br-|veth|virbr|cni|flannel|cali|vxlan|tun|tap|wg|tailscale|zt)")
 HOST_HEADER = re.compile(r"^[A-Za-z0-9.\-]+(:\d{1,5})?$")
+
+# ----------------------------------------------------------------- overlay
+# While at least one TV watches, the print status is polled and rendered as a
+# single line of text. ffmpeg's drawtext re-reads that line for every frame
+# (reload=1), so the progress burns into the picture that DLNA TVs see — the
+# web page draws its own card, but a TV playing the MPEG-TS stream would
+# otherwise watch the print blind. With no status text the stream stays a
+# zero-cpu remux (-c copy).
+
+VIEWERS = [0]          # open DLNA streams; the overlay only polls while > 0
+VIEWERS_LOCK = threading.Lock()
+FONT_CANDIDATES = (    # first existing bold sans wins; empty = no overlay
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",   # Debian/Ubuntu
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",            # Fedora
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",               # Arch
+)
+
+
+def minutes_as_clock(total):
+    return "%d:%02d" % (total // 60, total % 60)
+
+
+def overlay_line(data):
+    """status.json -> one short line for the TV; "" when there is nothing to say."""
+    if not isinstance(data, dict) or data.get("feed") != "live":
+        return ""
+    job, temps = data.get("job") or {}, data.get("temps") or {}
+    nozzles = temps.get("nozzles") or []
+    nozzle = next((n for n in nozzles if n.get("active")), nozzles[0] if nozzles else None)
+    parts = []
+    if isinstance(nozzle, dict):
+        parts.append("N %d°" % nozzle.get("temp", 0))
+    if isinstance(temps.get("bed"), dict):
+        parts.append("B %d°" % temps["bed"].get("temp", 0))
+    if isinstance(temps.get("chamber"), dict):
+        parts.append("C %d°" % temps["chamber"].get("temp", 0))
+    heat = " · ".join(parts)
+    state = str(job.get("state") or "IDLE").upper()
+    percent = job.get("percent")
+    if state == "FINISH":
+        head = "Print finished · 100%"
+    elif state == "PAUSE":
+        head = "Paused %s%%" % percent
+    elif state == "RUNNING":
+        name = str(job.get("name") or "").strip()
+        head = "%s · %s%%" % (name[:28], percent)
+    else:
+        head = ""
+    tail = []
+    remaining = job.get("remaining") or 0
+    if state in ("RUNNING", "PAUSE") and remaining > 0:
+        tail.append("%s left" % minutes_as_clock(remaining))
+    layer, layers = job.get("layer") or 0, job.get("layers") or 0
+    if state in ("RUNNING", "PAUSE") and layer > 0:
+        tail.append("layer %d%s" % (layer, "/%d" % layers if layers >= layer > 0 else ""))
+    alerts = job.get("alerts") or 0
+    if alerts:
+        tail.append("%d alert%s" % (alerts, "s" if alerts != 1 else ""))
+    pieces = [piece for piece in (head, " · ".join(tail), heat) if piece]
+    return " · ".join(pieces)
+
+
+def poll_overlay():
+    """Keep the overlay text fresh while (and only while) someone watches."""
+    warned = False
+    while True:
+        with VIEWERS_LOCK:
+            watching = VIEWERS[0] > 0
+        if not watching:
+            time.sleep(1)
+            continue
+        text = ""
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d/status.json" % STATUS_PORT, timeout=3) as r:
+                if r.status == 200:
+                    text = overlay_line(json.loads(r.read().decode("utf-8", "replace")))
+        except Exception:
+            text = ""
+        directory = os.path.dirname(STATUS_TEXT)
+        try:
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(STATUS_TEXT + ".tmp", "w") as f:
+                f.write(text)
+            os.replace(STATUS_TEXT + ".tmp", STATUS_TEXT)
+        except OSError as err:
+            if not warned:  # e.g. no RuntimeDirectory: overlay stays off, streaming continues
+                log("overlay: cannot write %s (%s); burning the status in is off" % (STATUS_TEXT, err))
+                warned = True
+        time.sleep(3)
+
+
+def overlay_wanted():
+    return OVERLAY and os.path.exists(STATUS_TEXT) and os.path.getsize(STATUS_TEXT) > 0
+
+
+def font_file():
+    for path in FONT_CANDIDATES:
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def drawtext_filter():
+    """The drawtext filter, or "" when the host has no usable font."""
+    font = font_file()
+    if not font:
+        return ""
+    # The drifting x keeps static text from burning into OLED panels; the
+    # single quotes protect the comma in mod() from the filtergraph parser.
+    # expansion=none: the status line carries % signs, which the default
+    # expansion would otherwise swallow (and drop the whole line with it).
+    return ("drawtext=fontfile=%s:textfile=%s:reload=1:expansion=none:fontsize=36:"
+            "fontcolor=white:box=1:boxcolor=black@0.45:boxborderw=16:"
+            "x='48+32*mod(floor(t/60)\\,2)':y=h-text_h-48") % (font, STATUS_TEXT)
+
+
+def player_args(ffmpeg):
+    """One ffmpeg: go2rtc's MP4 in, MPEG-TS for the TV out."""
+    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
+           "-i", "http://127.0.0.1:%d/api/stream.mp4?src=%s" % (HTTP_PORT, STREAM),
+           "-map", "0:v:0", "-map", "0:a:0?"]  # audio only when the radio is on
+    drawn = drawtext_filter() if overlay_wanted() else ""
+    if drawn:
+        # Re-encode only to burn the status in; otherwise a plain remux.
+        cmd += ["-vf", drawn, "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
+    else:
+        cmd += ["-c", "copy"]
+    return cmd + ["-f", "mpegts", "-mpegts_flags", "+resend_headers",
+                  "-muxdelay", "0", "-muxpreload", "0", "pipe:1"]
+
+
+def start_player(ffmpeg):
+    """Spawn ffmpeg, return (process, first bytes, stderr file). None first bytes = no video."""
+    # stderr to a temp file: when a player dies we log why; a permanent pipe
+    # would deadlock once ffmpeg fills it.
+    errors = tempfile.TemporaryFile()
+    proc = subprocess.Popen(player_args(ffmpeg), stdout=subprocess.PIPE, stderr=errors)
+    ready, _, _ = select.select([proc.stdout], [], [], 20)
+    first = os.read(proc.stdout.fileno(), 65536) if ready else b""
+    return proc, first, errors
+
+
+def stop_player(proc):
+    if not proc:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def warm_up():
+    """Dial the camera once when a TV browses, so Play starts on a warm stream.
+
+    The printer answers a fresh RTSP dial in about a second, but only after a
+    long quiet period (nobody watched, printer asleep on its Wi-Fi) the first
+    dial can take several seconds — longer than a TV waits before it gives
+    up on an item. One discarded snapshot forces go2rtc to open the camera
+    now; the stream the TV then plays attaches to a live producer.
+    """
+    try:
+        url = "http://127.0.0.1:%d/api/frame.jpeg?src=%s" % (HTTP_PORT, CAM_STREAM)
+        with urllib.request.urlopen(url, timeout=8) as r:
+            while len(r.read(65536)) == 65536:
+                pass
+    except Exception:
+        pass
 
 
 def log(msg):
@@ -344,6 +524,8 @@ class Handler(BaseHTTPRequestHandler):
                     criteria = tag(body, "SearchCriteria")
                     wanted = criteria in ("", "*") or "videoItem" in criteria or "object.item" in criteria
                     objects = [live_item(self.base_url())] if wanted else []
+                if objects:
+                    threading.Thread(target=warm_up, daemon=True).start()
                 total = len(objects)
                 objects = objects[start:] if start < total else []
                 return [("Result", didl(objects)), ("NumberReturned", len(objects)),
@@ -389,16 +571,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def thumbnail(self):
         """A live frame of the print, or the logo when the printer is offline."""
-        data = None
-        url = "http://127.0.0.1:%d/api/frame.jpeg?src=%s&width=160&cache=15s" % (HTTP_PORT, CAM_STREAM)
-        try:
-            with urllib.request.urlopen(url, timeout=4) as r:
-                if r.status == 200:
-                    data = r.read(512 * 1024)
-                    if not data.startswith(b"\xff\xd8"):
-                        data = None
-        except Exception:
-            pass
+        # One retry: go2rtc's snapshot producer races the stream producer for
+        # the printer's single RTSP session and can lose exactly once.
+        for attempt in (1, 2):
+            data = None
+            url = "http://127.0.0.1:%d/api/frame.jpeg?src=%s&width=160&cache=15s" % (HTTP_PORT, CAM_STREAM)
+            try:
+                with urllib.request.urlopen(url, timeout=4) as r:
+                    if r.status == 200:
+                        data = r.read(512 * 1024)
+                        if not data.startswith(b"\xff\xd8"):
+                            data = None
+            except Exception:
+                pass
+            if data is not None or attempt == 2:
+                break
+            time.sleep(1.2)
         if data is None:
             path = os.path.join(ICON_DIR, "icon-120.jpg")
             if not os.path.isfile(path):
@@ -423,21 +611,36 @@ class Handler(BaseHTTPRequestHandler):
         if not MAX_STREAMS.acquire(blocking=False):
             return self.reply(503, b"too many viewers", "text/plain")
         viewer = self.client_address[0]
-        proc = None
+        proc, first, started, errors = None, b"", False, None
         try:
-            proc = subprocess.Popen(
-                [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
-                 "-i", "http://127.0.0.1:%d/api/stream.mp4?src=%s" % (HTTP_PORT, STREAM),
-                 "-map", "0:v:0", "-map", "0:a:0?",  # audio only when the radio is on
-                 "-c", "copy", "-f", "mpegts",
-                 "-mpegts_flags", "+resend_headers", "-muxdelay", "0", "-muxpreload", "0", "pipe:1"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            ready, _, _ = select.select([proc.stdout], [], [], 15)
-            first = os.read(proc.stdout.fileno(), 65536) if ready else b""
+            with VIEWERS_LOCK:
+                VIEWERS[0] += 1
+            # After a service restart the runtime directory starts empty and
+            # the overlay poller needs a second to fetch the status. Without
+            # this wait the first viewer gets the plain-copy pipeline and the
+            # burned-in status only appears after the next stall.
+            if OVERLAY:
+                deadline = time.time() + 4
+                while not overlay_wanted() and time.time() < deadline:
+                    time.sleep(0.25)
+            # Two attempts to start: after a long quiet period the printer may
+            # still be waking its camera (or recovering its Wi-Fi), and one
+            # failed dial must not become "cannot play" on the TV.
+            for _ in (1, 2):
+                proc, first, errors = start_player(ffmpeg)
+                if first:
+                    break
+                errors.seek(0)
+                log("stream for %s: player did not start (%s)"
+                    % (viewer, errors.read().decode("utf-8", "replace").strip().splitlines()[-1:]))
+                stop_player(proc)
+                proc = None
+                time.sleep(1)
             if not first:
                 log("stream for %s: no video from the printer" % viewer)
                 return self.reply(503, b"no video from the printer", "text/plain")
             log("stream started for %s (%s)" % (viewer, mime))
+            started = True
             self.close_connection = True
             self.send_response(200)
             self.send_header("Content-Type", mime)
@@ -446,21 +649,41 @@ class Handler(BaseHTTPRequestHandler):
             for k, v in headers:
                 self.send_header(k, v)
             self.end_headers()
+            # A printer that drops (Wi-Fi power save, firmware reboot) would
+            # freeze a plain copy pipe forever. Instead: up to three rebuilds,
+            # each restarting the player; the new PAT/PMT lets the TV resync
+            # on the same response. The overlay poller keeps the status text
+            # fresh in the 3 s gaps between reads.
+            gap_until, respawns = time.time() + 20, 3
             chunk = first
             while chunk:
                 self.wfile.write(chunk)
-                ready, _, _ = select.select([proc.stdout], [], [], 20)
+                ready, _, _ = select.select([proc.stdout], [], [], 3)
                 chunk = os.read(proc.stdout.fileno(), 65536) if ready else b""
+                if chunk:
+                    gap_until = time.time() + 20
+                    continue
+                if time.time() < gap_until:
+                    continue
+                if respawns <= 0:
+                    break
+                respawns -= 1
+                stop_player(proc)
+                proc, chunk, errors = start_player(ffmpeg)
+                if not chunk:
+                    errors.seek(0)
+                    log("stream for %s: player did not restart (%s)"
+                        % (viewer, errors.read().decode("utf-8", "replace").strip().splitlines()[-1:]))
+                if chunk:
+                    gap_until = time.time() + 20
+                log("stream for %s: the printer dropped out; reconnecting" % viewer)
         except (BrokenPipeError, ConnectionResetError, socket.timeout):
             pass
         finally:
-            if proc:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
+            stop_player(proc)
+            with VIEWERS_LOCK:
+                VIEWERS[0] -= 1
+            if started:
                 log("stream stopped for %s" % viewer)
             MAX_STREAMS.release()
 
@@ -569,7 +792,7 @@ class SSDP:
 
     def respond(self, matches, location, addr, port):
         for nt, usn in matches:
-            msg = ("HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nDATE: %s\r\nEXT:\r\n"
+            msg = ("HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=900\r\nDATE: %s\r\nEXT:\r\n"
                    "LOCATION: %s\r\nSERVER: %s\r\nST: %s\r\nUSN: %s\r\n"
                    "BOOTID.UPNP.ORG: %d\r\nCONFIGID.UPNP.ORG: 1\r\nContent-Length: 0\r\n\r\n"
                    ) % (formatdate(usegmt=True), location, SERVER, nt, usn, self.boot_id)
@@ -598,7 +821,7 @@ class SSDP:
                     head = "NOTIFY * HTTP/1.1\r\nHOST: %s:%d\r\nNT: %s\r\nNTS: %s\r\nUSN: %s\r\n" % (
                         SSDP_GROUP, SSDP_PORT, nt, nts, usn)
                     if nts == "ssdp:alive":
-                        head += "CACHE-CONTROL: max-age=1800\r\nLOCATION: %s\r\nSERVER: %s\r\n" % (
+                        head += "CACHE-CONTROL: max-age=900\r\nLOCATION: %s\r\nSERVER: %s\r\n" % (
                             self.location(LAN_IP or addr), SERVER)
                     head += "BOOTID.UPNP.ORG: %d\r\nCONFIGID.UPNP.ORG: 1\r\n\r\n" % self.boot_id
                     try:
@@ -607,16 +830,23 @@ class SSDP:
                         pass
 
     def announce_forever(self):
+        # Say goodbye for the previous boot first, so TVs drop their stale
+        # entry instead of keeping a dead one until its max-age runs out (that
+        # looks like bambooTV "left the network"). The pause keeps the goodbye
+        # ahead of the hellos: multicast can reorder, and a goodbye a TV
+        # hears after our hello would make it drop the fresh entry again.
+        self.notify("ssdp:byebye")
+        time.sleep(2)
         for delay in (0, 1, 3):  # TVs sometimes miss the first burst
             time.sleep(delay)
             self.notify("ssdp:alive")
-        minutes = 0
         while True:
             time.sleep(60)
-            minutes += 1
             self.rejoin()  # also picks up interfaces that came up later (Wi-Fi, DHCP)
-            if minutes % 3 == 0:  # a TV that switches on hears about us within 3 minutes
-                self.notify("ssdp:alive")
+            # An alive every minute: a TV switched on mid-hour hears about us
+            # within a minute, and a missed packet costs one minute of
+            # visibility instead of three.
+            self.notify("ssdp:alive")
 
 
 class Server(ThreadingHTTPServer):
@@ -631,7 +861,7 @@ class Server(ThreadingHTTPServer):
 def main():
     httpd = Server(("", DLNA_PORT), Handler)
     ssdp = SSDP()
-    for target in (httpd.serve_forever, ssdp.serve, ssdp.announce_forever):
+    for target in (httpd.serve_forever, ssdp.serve, ssdp.announce_forever, poll_overlay):
         threading.Thread(target=target, daemon=True).start()
     log("bambooTV DLNA: \"%s\" on port %d (%s), icons: %d" % (NAME, DLNA_PORT, UDN, len(present_icons())))
 

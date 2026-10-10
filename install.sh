@@ -48,6 +48,7 @@ PURGE=false
 WITH_DLNA=""     # "", true, false; "" = keep the current choice
 RADIO=""         # "", on, off;      "" = keep the current choice
 STATUS=""        # "", on, off;      "" = keep the current choice (on by default)
+OVERLAY=""       # "", on, off;      "" = keep the current choice (on by default)
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -74,6 +75,8 @@ Usage: sudo ./install.sh [options]
   --status on|off        print progress, temperatures and AMS on the TV page
                          (default on)
   --status-port PORT     port of the print status service (default 1985)
+  --overlay on|off       burn the print progress into the DLNA picture
+                         (default on; off saves CPU on a Raspberry Pi)
   --uninstall            remove bambooTV
   --purge                with --uninstall: also remove the settings
   -h, --help             this help
@@ -92,8 +95,9 @@ while [[ $# -gt 0 ]]; do
     --lan-ip)       DLNA_IP=${2:?}; shift 2 ;;
     --radio)        RADIO=${2:?}; shift 2 ;;
     --radio-url)    RADIO_URL=${2:?}; RADIO=on; shift 2 ;;
-    --status)       STATUS=${2:?}; shift 2 ;;
-    --status-port)  STATUS_PORT=${2:?}; shift 2 ;;
+    --status)        STATUS=${2:?}; shift 2 ;;
+    --status-port)   STATUS_PORT=${2:?}; shift 2 ;;
+    --overlay)       OVERLAY=${2:?}; shift 2 ;;
     --uninstall)    UNINSTALL=true; shift ;;
     --purge)        PURGE=true; shift ;;
     -h|--help)      usage; exit 0 ;;
@@ -154,6 +158,9 @@ fi
 # Print status is on unless it was switched off (saved as STATUS=off).
 [[ -n $STATUS ]] || { [[ ${SAVED[STATUS]:-} == off ]] && STATUS=off || STATUS=on; }
 [[ $STATUS == on || $STATUS == off ]] || die "--status expects on or off"
+# The overlay is on unless it was switched off (saved as OVERLAY=off).
+[[ -n $OVERLAY ]] || { [[ ${SAVED[OVERLAY]:-} == off ]] && OVERLAY=off || OVERLAY=on; }
+[[ $OVERLAY == on || $OVERLAY == off ]] || die "--overlay expects on or off"
 [[ $RADIO == off ]] || RADIO_URL=${RADIO_URL:-$DEFAULT_RADIO_URL}
 # No spaces, quotes, '#' or '$': the URL ends up inside a go2rtc source string.
 URL_RE='^https?://[A-Za-z0-9._~:/?&=%+,;@!-]+$'
@@ -395,6 +402,10 @@ if [[ $WITH_DLNA == true ]]; then
     echo "# bambooTV DLNA, written by install.sh (no secrets in here)"
     echo "HTTP_PORT=$PORT"
     echo "DLNA_PORT=$DPORT"
+    # The overlay polls the status service (same port), which install.sh starts
+    # whenever print status is on; STATUS_PORT only needs writing when moved.
+    [[ $STATUS == on && $SPORT != 1985 ]] && echo "STATUS_PORT=$SPORT" || true
+    [[ $OVERLAY == off ]] && echo "OVERLAY=off" || true
     [[ -z $DLNA_IP ]] || echo "DLNA_LAN_IP=$DLNA_IP"
   } >"$DLNA_ENV_FILE"
   chmod 0644 "$DLNA_ENV_FILE"

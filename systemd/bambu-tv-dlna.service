@@ -13,6 +13,8 @@ RestartSec=5
 
 # Same sandbox as bambu-tv: throwaway user, read-only system, no capabilities.
 DynamicUser=yes
+# Private scratch space for the burn-in overlay text (/run/bambu-tv/status.txt).
+RuntimeDirectory=bambu-tv
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

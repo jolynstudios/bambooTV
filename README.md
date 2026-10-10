@@ -24,6 +24,7 @@ company.
 - **Print info on screen**: progress, time left, layer, nozzle, bed and
   chamber temperatures, and the AMS spools in their real colours, as a card
   over the picture. The bambooTV logo prints itself along with your print.
+  On DLNA TVs the same info is burned into the picture itself.
 - **Appears on your TV by itself**: bambooTV announces itself on the network
   (DLNA), so Samsung and other DLNA-capable TVs list it under their connected
   devices, with its own icon and a live thumbnail of the print.
@@ -33,7 +34,9 @@ company.
   radio station you like, with an on/off switch.
 - **Fixes itself**: printer off, network hiccup, firmware reboot — the picture
   comes back on its own, and a calm "no picture" screen tells you the one
-  thing to fix.
+  thing to fix. A TV that switched on hours later still finds bambooTV under
+  its connected devices, and starting a print view after a quiet night takes
+  one press, not a restart.
 - **OLED-friendly**: on-screen elements fade out; the "no picture" screen
   drifts and dims.
 - **Locked down**: only playback and print info are reachable on your network,
@@ -182,6 +185,7 @@ sudo systemctl restart bambu-tv bambu-tv-dlna
 | `--radio-url URL` | `RADIO_URL` | radio station stream | 181.FM Power 181 |
 | `--status on\|off` | — | print info on the TV page | on |
 | `--status-port PORT` | `STATUS_PORT` | port of the print info service | `1985` |
+| `--overlay on\|off` | — | burn the print progress into the DLNA picture (off saves CPU on a Raspberry Pi) | on |
 | — | `RTSP_USER`, `RTSP_PASS` | require a login for RTSP apps | open |
 
 ## Other apps
@@ -228,6 +232,7 @@ sudo ./install.sh --uninstall --purge          # remove everything
 | The page loads but stays black | Open the menu and choose **MJPEG**. |
 | No sound in the browser | Open the menu and press **Sound → On**. Is the radio switched on (`--radio on`)? |
 | No print info on the TV page | Open the menu: the *Print info* row says what's wrong, for example a rejected access code. Switched off? `sudo ./install.sh --status on`. With a firewall, allow TCP 1985. |
+| bambooTV vanished from *Connected devices*, or the item no longer plays | TVs forget a device when they miss its announcements; bambooTV reintroduces itself every minute, so the entry comes back within two minutes (or after switching the TV off and on). Still nothing? `sudo systemctl restart bambu-tv-dlna`. |
 
 Logs: `journalctl -u bambu-tv -f`, `journalctl -u bambu-tv-status -f` and
 `journalctl -u bambu-tv-dlna -f`.

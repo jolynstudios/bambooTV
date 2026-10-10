@@ -46,6 +46,11 @@ services:
     environment:  # no access code in here
       HTTP_PORT: ${HTTP_PORT:-1984}
       DLNA_PORT: ${DLNA_PORT:-49499}
+      STATUS_PORT: ${STATUS_PORT:-1985}
       DLNA_LAN_IP: ${DLNA_LAN_IP:-}
+      OVERLAY: ${OVERLAY:-on}
+    tmpfs:
+      # Scratch space for the burn-in overlay text.
+      - /run/bambu-tv
     volumes:
       - ./dlna:/bambu-tv/dlna:ro

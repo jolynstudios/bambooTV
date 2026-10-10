@@ -10,7 +10,8 @@ radio station ──▶ ffmpeg ──▶ go2rtc stream "tv" ──────�
                  (optional, AAC)   (camera + radio)
 
 TV "connected devices" ◀── SSDP :1900 / HTTP :49499 ── bambu_tv_dlna.py (service bambu-tv-dlna)
-                                                        └─ per viewer: ffmpeg remuxes go2rtc's MP4 → MPEG-TS
+                                                        ├─ per viewer: ffmpeg remuxes go2rtc's MP4 → MPEG-TS
+                                                        └─ and burns the print status into the picture
 
 printer status ──MQTT/TLS :8883──▶ bambu_tv_status.py ──HTTP :1985 /status.json──▶ TV page card
  (read-only subscription,           (service bambu-tv-status)
@@ -84,8 +85,16 @@ Verified against a real X2D:
   interface** (Linux `ip_mreqn` per interface index), skipping container
   bridges and tunnels. Machines with two NICs on one LAN (Wi-Fi + Ethernet)
   are the common case where single-interface servers stay invisible. Answers
-  M-SEARCH with a `LOCATION` routable to the asking TV; announces itself every
-  3 minutes and says goodbye on shutdown. Only answers private addresses.
+  M-SEARCH with a `LOCATION` routable to the asking TV; says goodbye and
+  hello around every restart, and repeats the hello **every minute**. Only
+  answers private addresses.
+- **Presence on the TV:** entries live on the TV for `max-age` (900 s) after
+  the last announcement. A TV that misses announcements — it was off, or the
+  router's IGMP snooping swallowed them — would keep a dead entry for half an
+  hour and show bambooTV as "gone". The per-minute hello (with a per-minute
+  multicast re-join, see below) re-introduces the server within two minutes.
+  At startup the server first says goodbye for the previous boot, pauses two
+  seconds so the goodbye cannot arrive after the hello, then says hello.
 - **IGMP snooping:** the server leaves and re-joins the SSDP group every
   minute. The kernel reports a multicast membership only when it joins, and
   routers or access points with IGMP snooping but no IGMP querier forget that
@@ -94,12 +103,37 @@ Verified against a real X2D:
   sends a fresh report every minute.
 - **Content:** one `object.item.videoItem`, "X2D live", with two resources
   (`video/mp2t` and `video/mpeg`, same stream), DLNA flags for live streaming,
-  and a live thumbnail (160 px snapshot via go2rtc, logo as fallback). Supports
+  and a live thumbnail (160 px snapshot via go2rtc, logo as fallback; one
+  retry, because go2rtc's snapshot producer races the stream producer for the
+  printer's single camera session and can lose exactly once). Supports
   Browse, Search, Samsung's `X_GetFeatureList`, ConnectionManager and the
   MediaReceiverRegistrar; unknown actions get UPnP error 401.
-- **Playback:** per viewer, ffmpeg remuxes go2rtc's MP4 output to MPEG-TS
-  (`-c copy`). MP4 rather than RTSP because go2rtc's MP4 muxer keeps camera
-  video and radio audio on one timeline; at most 6 concurrent viewers.
+- **Warm start:** every Browse fires one discarded snapshot in the
+  background, which makes go2rtc open the camera before the TV presses play.
+  After a long quiet period the first dial to the printer can take seconds —
+  longer than a TV waits — so the play request itself attaches to a warm
+  producer and starts in about a second.
+- **Playback:** per viewer, ffmpeg remuxes go2rtc's MP4 output to MPEG-TS.
+  MP4 rather than RTSP because go2rtc's MP4 muxer keeps camera video and
+  radio audio on one timeline; at most 6 concurrent viewers.
+  - **Burned-in status:** while the status service has something to report,
+    the player re-encodes (`libx264 veryfast`) with `drawtext` over the
+    bottom of the picture: job, percent, time left, layer and temperatures,
+    re-read from a status file every frame (`reload=1`), drifting sideways
+    every minute for OLED panels. The status is polled (every 3 s) only while
+    someone watches, so the printer connection still follows the "on demand"
+    rule. `expansion=none` is required — the default text expansion swallows
+    the `%` sign and with it the whole line. With no status text (status
+    service off, printer offline) the stream stays a zero-CPU remux
+    (`-c copy`). `--overlay off` (or `OVERLAY=off` in Docker) forces the
+    remux, e.g. on a Raspberry Pi.
+  - **Stall recovery:** the printer dropping mid-stream (Wi-Fi power save,
+    firmware reboot) would freeze a copy pipe forever. Instead the player
+    rebuilds itself up to three times — a new `PAT`/`PMT` in the same
+    response lets the TV resync — and the start itself is tried twice, so a
+    slow first dial is not reported to the TV as "cannot play". ffmpeg's
+    stderr is kept and its last line logged whenever a player fails, which
+    turns "the picture is gone" into a one-line reason in the journal.
 - **Icon:** PNG/JPEG 48/120/256 px in `dlna/icons/`, rendered from
   `web/icon.svg`.
 
@@ -218,6 +252,7 @@ Verified on 9 and 10 October 2026:
 | Same network: router with IGMP snooping and no IGMP querier | hosts stop receiving SSDP about 4 minutes after joining; with the per-minute re-join the server kept receiving and answered every search for 11 minutes |
 | Real X2D, printing (10 October) | status feed live within 3 s; progress, layer, time left, both nozzles, bed, chamber and the AMS (four slots, active slot, humidity) match the printer |
 | Samsung QE77S93C (Tizen) | discovered the DLNA server, fetched its icon and thumbnail, played the MPEG-TS item |
+| Real X2D printing, 10 October (after the overlay release) | smoke test 19/19 against the home server; DLNA item with the burned-in status line verified frame-accurate (`Flexicube… · 92% · 0:20 left · layer 210/225 · N 220° · B 55° · C 34°`, live-updating); play after 95 s of quiet started in 1.2 s |
 | Debian 12 systemd container (arm64) | install, reinstall, migration from the former Gerbera add-on, DLNA on/off, radio on/off, uninstall, purge; smoke test green |
 | Chrome, 1920×1080 | MSE live; fallback MSE → HLS → MJPEG; printer off → hint → recovery; sound on/off |
 
