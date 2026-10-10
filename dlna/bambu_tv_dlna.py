@@ -17,8 +17,8 @@ Standard library only (Python 3.9+). Settings come from the environment:
   CAM_STREAM   go2rtc camera stream for thumbnails    (default "x2d")
   HTTP_PORT    bambooTV web port (stream, thumbnail)  (default 1984)
   STATUS_PORT  print status port (overlay text)       (default 1985)
-  OVERLAY      burn print progress into the picture   (default "on"; "off" = plain copy)
-  STATUS_TEXT  overlay text file                      (default /run/bambu-tv/status.txt)
+  OVERLAY      burn the print card into the picture   (default "on"; "off" = plain copy)
+  STATUS_TEXT  overlay text directory (…/status.txt)  (default /run/bambu-tv/status.txt)
 """
 
 import ipaddress
@@ -53,6 +53,14 @@ HTTP_PORT = int(os.environ.get("HTTP_PORT") or 1984)
 STATUS_PORT = int(os.environ.get("STATUS_PORT") or 1985)
 OVERLAY = (os.environ.get("OVERLAY") or "on") != "off"
 STATUS_TEXT = os.environ.get("STATUS_TEXT") or "/run/bambu-tv/status.txt"
+STATUS_DIR = os.path.dirname(STATUS_TEXT)
+CARD_PNG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "card.png")
+CARD_W, CARD_H, CARD_MARGIN = 520, 250, 64
+# Where the card sits: like the TV page, bottom right, title-safe inside.
+CARD_X0 = "(main_w-%d-24*mod(floor(t/60)\\,2))" % (CARD_W + CARD_MARGIN)
+CARD_Y0 = "(main_h-%d)" % (CARD_H + 72)
+BONE, ASH, SILK = "#EFEAE1", "#8E8A83", "#E4B45B"
+BAR_BLOCKS = 12
 
 UDN = "uuid:" + str(uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname() + "/bambu-tv/" + NAME))
 SERVER = "Linux/%s UPnP/1.0 bambooTV/1.0" % platform.release()
@@ -94,82 +102,92 @@ FONT_CANDIDATES = (    # first existing bold sans wins; empty = no overlay
 )
 
 
-def minutes_as_clock(total):
-    return "%d:%02d" % (total // 60, total % 60)
-
-
-def overlay_line(data):
-    """status.json -> one short line for the TV; "" when there is nothing to say."""
+def card_fields(data):
+    """status.json -> contents for the card's text files; empty state = show nothing."""
+    empty = {"state": "", "name": "", "pct": "", "eta": "", "bar": "", "temps": ""}
     if not isinstance(data, dict) or data.get("feed") != "live":
-        return ""
+        return empty
     job, temps = data.get("job") or {}, data.get("temps") or {}
+    state = str(job.get("state") or "IDLE").upper()
+    percent = max(0, min(100, int(job.get("percent") or 0)))
+    fields = dict(empty)
+    fields["state"] = {"FINISH": "Finished", "PAUSE": "Paused", "FAILED": "Stopped",
+                       "RUNNING": "Printing"}.get(state, "Idle")
+    fields["name"] = str(job.get("name") or "").strip()[:22]
+    fields["pct"] = "%d%%" % percent
+    filled = int(round(percent / 100.0 * BAR_BLOCKS))
+    fields["bar"] = "█" * filled + "░" * (BAR_BLOCKS - filled)
+    tail = []
+    remaining = job.get("remaining") or 0
+    if remaining > 0:
+        tail.append("%d:%02d left" % (remaining // 60, remaining % 60))
+    layer, layers = job.get("layer") or 0, job.get("layers") or 0
+    if layer > 0:
+        tail.append("layer %d%s" % (layer, "/%d" % layers if layers >= layer > 0 else ""))
+    alerts = job.get("alerts") or 0
+    if alerts:
+        tail.append("%d alert%s" % (alerts, "s" if alerts != 1 else ""))
+    fields["eta"] = " · ".join(tail)
+    parts = []
     nozzles = temps.get("nozzles") or []
     nozzle = next((n for n in nozzles if n.get("active")), nozzles[0] if nozzles else None)
-    parts = []
     if isinstance(nozzle, dict):
         parts.append("N %d°" % nozzle.get("temp", 0))
     if isinstance(temps.get("bed"), dict):
         parts.append("B %d°" % temps["bed"].get("temp", 0))
     if isinstance(temps.get("chamber"), dict):
         parts.append("C %d°" % temps["chamber"].get("temp", 0))
-    heat = " · ".join(parts)
-    state = str(job.get("state") or "IDLE").upper()
-    percent = job.get("percent")
-    if state == "FINISH":
-        head = "Print finished · 100%"
-    elif state == "PAUSE":
-        head = "Paused %s%%" % percent
-    elif state == "RUNNING":
-        name = str(job.get("name") or "").strip()
-        head = "%s · %s%%" % (name[:28], percent)
-    else:
-        head = ""
-    tail = []
-    remaining = job.get("remaining") or 0
-    if state in ("RUNNING", "PAUSE") and remaining > 0:
-        tail.append("%s left" % minutes_as_clock(remaining))
-    layer, layers = job.get("layer") or 0, job.get("layers") or 0
-    if state in ("RUNNING", "PAUSE") and layer > 0:
-        tail.append("layer %d%s" % (layer, "/%d" % layers if layers >= layer > 0 else ""))
-    alerts = job.get("alerts") or 0
-    if alerts:
-        tail.append("%d alert%s" % (alerts, "s" if alerts != 1 else ""))
-    pieces = [piece for piece in (head, " · ".join(tail), heat) if piece]
-    return " · ".join(pieces)
+    fields["temps"] = " · ".join(parts)
+    return fields
+
+
+CARD_FILES = ("state", "name", "pct", "eta", "bar", "temps")
+
+
+def write_card(fields):
+    """Atomically refresh every card text file (empty files are valid: they hide a row)."""
+    for key in CARD_FILES:
+        target = os.path.join(STATUS_DIR, "card-%s.txt" % key)
+        try:
+            with open(target + ".tmp", "w") as f:
+                f.write(fields[key])
+            os.replace(target + ".tmp", target)
+        except OSError as err:
+            if not write_card.warned:  # e.g. no RuntimeDirectory: overlay stays off
+                log("overlay: cannot write %s (%s); burning the status in is off" % (target, err))
+                write_card.warned = True
+
+
+write_card.warned = False
 
 
 def poll_overlay():
-    """Keep the overlay text fresh while (and only while) someone watches."""
-    warned = False
+    """Keep the card text fresh while (and only while) someone watches."""
     while True:
         with VIEWERS_LOCK:
             watching = VIEWERS[0] > 0
         if not watching:
             time.sleep(1)
             continue
-        text = ""
+        fields = card_fields({})
         try:
             with urllib.request.urlopen("http://127.0.0.1:%d/status.json" % STATUS_PORT, timeout=3) as r:
                 if r.status == 200:
-                    text = overlay_line(json.loads(r.read().decode("utf-8", "replace")))
+                    fields = card_fields(json.loads(r.read().decode("utf-8", "replace")))
         except Exception:
-            text = ""
-        directory = os.path.dirname(STATUS_TEXT)
-        try:
-            if directory:
-                os.makedirs(directory, exist_ok=True)
-            with open(STATUS_TEXT + ".tmp", "w") as f:
-                f.write(text)
-            os.replace(STATUS_TEXT + ".tmp", STATUS_TEXT)
-        except OSError as err:
-            if not warned:  # e.g. no RuntimeDirectory: overlay stays off, streaming continues
-                log("overlay: cannot write %s (%s); burning the status in is off" % (STATUS_TEXT, err))
-                warned = True
+            fields = card_fields({})
+        if STATUS_DIR:
+            try:
+                os.makedirs(STATUS_DIR, exist_ok=True)
+            except OSError:
+                pass
+        write_card(fields)
         time.sleep(3)
 
 
 def overlay_wanted():
-    return OVERLAY and os.path.exists(STATUS_TEXT) and os.path.getsize(STATUS_TEXT) > 0
+    return OVERLAY and os.path.exists(os.path.join(STATUS_DIR, "card-state.txt")) \
+        and os.path.getsize(os.path.join(STATUS_DIR, "card-state.txt")) > 0
 
 
 def font_file():
@@ -179,15 +197,43 @@ def font_file():
     return ""
 
 
-def drawtext_filter():
-    """The drawtext filter, or "" when the host has no usable font."""
+def _card_text(textfile, x, y, size, color):
+    font = font_file()
+    return ("drawtext=fontfile=%s:textfile=%s/card-%s.txt:reload=1:expansion=none:"
+            "fontsize=%d:fontcolor=%s:x='%s':y='%s'"
+            ) % (font, STATUS_DIR, textfile, size, color, x, y)
+
+
+def card_filter():
+    """The full filter chain: card background, then its live texts. "" = no card."""
+    font = font_file()
+    if not font or not os.path.isfile(CARD_PNG):
+        return ""
+    # The drift keeps a static card from burning into OLED panels; the single
+    # quotes protect the commas from the filtergraph parser. Every text sits
+    # at a fixed offset inside the 620x300 card, so it moves with the card.
+    return (
+        "[0:v][1:v]overlay=x='%s':y='%s'[bg];[bg]"
+        "%s,%s,%s,%s,%s,%s[v]"
+    ) % (
+        CARD_X0, CARD_Y0,
+        _card_text("state", CARD_X0 + "+150", CARD_Y0 + "+30", 22, ASH),
+        _card_text("name", CARD_X0 + "+150", CARD_Y0 + "+56", 25, BONE),
+        _card_text("pct", CARD_X0 + "+150", CARD_Y0 + "+96", 52, BONE),
+        _card_text("eta", "(%s+486-text_w)" % CARD_X0, CARD_Y0 + "+142", 22, ASH),
+        _card_text("bar", CARD_X0 + "+150", CARD_Y0 + "+176", 30, SILK),
+        _card_text("temps", CARD_X0 + "+150", CARD_Y0 + "+214", 23, BONE),
+    )
+
+
+def fallback_filter():
+    """The one-line overlay, when card.png is missing (old install, custom build)."""
     font = font_file()
     if not font:
         return ""
-    # The drifting x keeps static text from burning into OLED panels; the
-    # single quotes protect the comma in mod() from the filtergraph parser.
     # expansion=none: the status line carries % signs, which the default
     # expansion would otherwise swallow (and drop the whole line with it).
+    # Kept for installs whose dlna folder predates card.png.
     return ("drawtext=fontfile=%s:textfile=%s:reload=1:expansion=none:fontsize=36:"
             "fontcolor=white:box=1:boxcolor=black@0.45:boxborderw=16:"
             "x='48+32*mod(floor(t/60)\\,2)':y=h-text_h-48") % (font, STATUS_TEXT)
@@ -196,15 +242,24 @@ def drawtext_filter():
 def player_args(ffmpeg):
     """One ffmpeg: go2rtc's MP4 in, MPEG-TS for the TV out."""
     cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
-           "-i", "http://127.0.0.1:%d/api/stream.mp4?src=%s" % (HTTP_PORT, STREAM),
-           "-map", "0:v:0", "-map", "0:a:0?"]  # audio only when the radio is on
-    drawn = drawtext_filter() if overlay_wanted() else ""
-    if drawn:
-        # Re-encode only to burn the status in; otherwise a plain remux.
-        cmd += ["-vf", drawn, "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-                "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
+           "-i", "http://127.0.0.1:%d/api/stream.mp4?src=%s" % (HTTP_PORT, STREAM)]
+    if overlay_wanted():
+        chain = card_filter()
+        legacy = os.path.exists(STATUS_TEXT) and os.path.getsize(STATUS_TEXT) > 0
+        if chain:
+            # Re-encode only to burn the card in; otherwise a plain remux.
+            cmd += ["-i", CARD_PNG, "-filter_complex", chain,
+                    "-map", "[v]", "-map", "0:a:0?",  # audio only when the radio is on
+                    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                    "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
+        elif legacy:
+            cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-vf", fallback_filter(),
+                    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                    "-crf", "23", "-maxrate", "8M", "-bufsize", "16M", "-c:a", "copy"]
+        else:
+            cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
     else:
-        cmd += ["-c", "copy"]
+        cmd += ["-map", "0:v:0", "-map", "0:a:0?", "-c", "copy"]
     return cmd + ["-f", "mpegts", "-mpegts_flags", "+resend_headers",
                   "-muxdelay", "0", "-muxpreload", "0", "pipe:1"]
 
@@ -632,7 +687,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 errors.seek(0)
                 log("stream for %s: player did not start (%s)"
-                    % (viewer, errors.read().decode("utf-8", "replace").strip().splitlines()[-1:]))
+                    % (viewer, " | ".join(errors.read().decode("utf-8", "replace").strip().splitlines()[-3:])))
                 stop_player(proc)
                 proc = None
                 time.sleep(1)
@@ -673,7 +728,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not chunk:
                     errors.seek(0)
                     log("stream for %s: player did not restart (%s)"
-                        % (viewer, errors.read().decode("utf-8", "replace").strip().splitlines()[-1:]))
+                        % (viewer, " | ".join(errors.read().decode("utf-8", "replace").strip().splitlines()[-3:])))
                 if chunk:
                     gap_until = time.time() + 20
                 log("stream for %s: the printer dropped out; reconnecting" % viewer)

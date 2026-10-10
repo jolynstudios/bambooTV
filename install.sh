@@ -397,6 +397,7 @@ if [[ $WITH_DLNA == true ]]; then
   step "Starting DLNA (on the TV: Source → Connected devices → bambooTV)"
   install -d -m 0755 "$PREFIX/dlna" "$PREFIX/dlna/icons"
   install -m 0644 "$HERE/dlna/bambu_tv_dlna.py" "$PREFIX/dlna/bambu_tv_dlna.py"
+  install -m 0644 "$HERE/dlna/card.png" "$PREFIX/dlna/card.png"
   install -m 0644 "$HERE"/dlna/icons/icon-* "$PREFIX/dlna/icons/"
   {
     echo "# bambooTV DLNA, written by install.sh (no secrets in here)"

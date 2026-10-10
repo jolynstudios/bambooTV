@@ -117,16 +117,18 @@ Verified against a real X2D:
   MP4 rather than RTSP because go2rtc's MP4 muxer keeps camera video and
   radio audio on one timeline; at most 6 concurrent viewers.
   - **Burned-in status:** while the status service has something to report,
-    the player re-encodes (`libx264 veryfast`) with `drawtext` over the
-    bottom of the picture: job, percent, time left, layer and temperatures,
-    re-read from a status file every frame (`reload=1`), drifting sideways
-    every minute for OLED panels. The status is polled (every 3 s) only while
-    someone watches, so the printer connection still follows the "on demand"
-    rule. `expansion=none` is required — the default text expansion swallows
-    the `%` sign and with it the whole line. With no status text (status
-    service off, printer offline) the stream stays a zero-CPU remux
-    (`-c copy`). `--overlay off` (or `OVERLAY=off` in Docker) forces the
-    remux, e.g. on a Raspberry Pi.
+    the player re-encodes (`libx264 veryfast`) with the print card over the
+    bottom right of the picture — the same panel as the TV page, with the
+    mark, job, percent, a block-glyph progress bar, layer and temperatures
+    (`dlna/card.png` background, translucent 62 %, texts re-read from the
+    status files every frame (`reload=1`), drifting sideways every minute
+    for OLED panels). The status is polled (every 3 s) only while someone
+    watches, so the printer connection still follows the "on demand" rule.
+    `expansion=none` is required — the default text expansion swallows the
+    `%` sign and with it the whole line. With no status text (status service
+    off, printer offline) the stream stays a zero-CPU remux (`-c copy`).
+    `--overlay off` (or `OVERLAY=off` in Docker) forces the remux, e.g. on a
+    Raspberry Pi.
   - **Stall recovery:** the printer dropping mid-stream (Wi-Fi power save,
     firmware reboot) would freeze a copy pipe forever. Instead the player
     rebuilds itself up to three times — a new `PAT`/`PMT` in the same
@@ -252,7 +254,7 @@ Verified on 9 and 10 October 2026:
 | Same network: router with IGMP snooping and no IGMP querier | hosts stop receiving SSDP about 4 minutes after joining; with the per-minute re-join the server kept receiving and answered every search for 11 minutes |
 | Real X2D, printing (10 October) | status feed live within 3 s; progress, layer, time left, both nozzles, bed, chamber and the AMS (four slots, active slot, humidity) match the printer |
 | Samsung QE77S93C (Tizen) | discovered the DLNA server, fetched its icon and thumbnail, played the MPEG-TS item |
-| Real X2D printing, 10 October (after the overlay release) | smoke test 19/19 against the home server; DLNA item with the burned-in status line verified frame-accurate (`Flexicube… · 92% · 0:20 left · layer 210/225 · N 220° · B 55° · C 34°`, live-updating); play after 95 s of quiet started in 1.2 s |
+| Real X2D printing, 10 October (after the overlay release) | smoke test 19/19 against the home server; DLNA item with the burned-in print card verified frame-accurate (panel, mark, percent, block bar, layer, temperatures, live-updating); play after 95 s of quiet started in 1.2 s; compact translucent card variant approved on the same TV |
 | Debian 12 systemd container (arm64) | install, reinstall, migration from the former Gerbera add-on, DLNA on/off, radio on/off, uninstall, purge; smoke test green |
 | Chrome, 1920×1080 | MSE live; fallback MSE → HLS → MJPEG; printer off → hint → recovery; sound on/off |
 
