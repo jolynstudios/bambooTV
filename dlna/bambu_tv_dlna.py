@@ -470,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
 class SSDP:
     def __init__(self):
         self.boot_id = int(time.time())
-        self.joined = set()
+        self.joined = {}  # interface -> its membership request, kept for rejoin()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, "SO_REUSEPORT"):
@@ -490,19 +490,38 @@ class SSDP:
                     continue
                 try:
                     self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-                    self.joined.add((index, name))
+                    self.joined[(index, name)] = mreq
                     log("ssdp: listening on %s%s" % (name, " (%s)" % addr if addr else ""))
                     break
                 except OSError:
                     continue
         if not self.joined:  # last resort: the kernel's default interface
+            mreq = struct.pack("4s4s", group, socket.inet_aton("0.0.0.0"))
             try:
-                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
-                                     struct.pack("4s4s", group, socket.inet_aton("0.0.0.0")))
-                self.joined.add("default")
+                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                self.joined["default"] = mreq
                 log("ssdp: listening on the default interface")
             except OSError as err:
                 log("ssdp: cannot join multicast group: %s" % err)
+
+    def rejoin(self):
+        """Leave and re-join the SSDP group, so the network hears about it again.
+
+        The kernel reports a multicast membership only when it joins. Routers
+        and access points with IGMP snooping but no IGMP querier forget that
+        report after a few minutes and stop passing the TVs' searches to this
+        machine: bambooTV then drops off the TV until the service restarts.
+        """
+        for key, mreq in list(self.joined.items()):
+            try:
+                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, mreq)
+            except OSError:
+                pass
+            try:
+                self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            except OSError:  # the interface is gone; join_all() picks it up if it returns
+                del self.joined[key]
+        self.join_all()
 
     def targets(self):
         return ([("upnp:rootdevice", UDN + "::upnp:rootdevice"), (UDN, UDN), (DEVICE, UDN + "::" + DEVICE)]
@@ -534,6 +553,8 @@ class SSDP:
         if headers.get("MAN", "").strip('"') != "ssdp:discover":
             return
         st = headers.get("ST", "")
+        if DEBUG:
+            log("ssdp: search from %s for %s" % (addr, st))
         matches = [t for t in self.targets() if st == "ssdp:all" or st == t[0]]
         if not matches:
             return
@@ -589,10 +610,13 @@ class SSDP:
         for delay in (0, 1, 3):  # TVs sometimes miss the first burst
             time.sleep(delay)
             self.notify("ssdp:alive")
+        minutes = 0
         while True:
-            time.sleep(600)
-            self.join_all()  # pick up interfaces that came up later (Wi-Fi, DHCP)
-            self.notify("ssdp:alive")
+            time.sleep(60)
+            minutes += 1
+            self.rejoin()  # also picks up interfaces that came up later (Wi-Fi, DHCP)
+            if minutes % 3 == 0:  # a TV that switches on hears about us within 3 minutes
+                self.notify("ssdp:alive")
 
 
 class Server(ThreadingHTTPServer):

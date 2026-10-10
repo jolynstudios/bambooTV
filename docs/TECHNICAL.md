@@ -78,7 +78,13 @@ Verified against a real X2D:
   bridges and tunnels. Machines with two NICs on one LAN (Wi-Fi + Ethernet)
   are the common case where single-interface servers stay invisible. Answers
   M-SEARCH with a `LOCATION` routable to the asking TV; announces itself every
-  10 minutes and says goodbye on shutdown. Only answers private addresses.
+  3 minutes and says goodbye on shutdown. Only answers private addresses.
+- **IGMP snooping:** the server leaves and re-joins the SSDP group every
+  minute. The kernel reports a multicast membership only when it joins, and
+  routers or access points with IGMP snooping but no IGMP querier forget that
+  report after a few minutes. From then on the TVs' searches no longer reach
+  the server, and it disappears from the TV until it restarts. The re-join
+  sends a fresh report every minute.
 - **Content:** one `object.item.videoItem`, "X2D live", with two resources
   (`video/mp2t` and `video/mpeg`, same stream), DLNA flags for live streaming,
   and a live thumbnail (160 px snapshot via go2rtc, logo as fallback). Supports
@@ -150,11 +156,12 @@ the page, snapshot, MJPEG, HLS, RTSP, radio audio, the DLNA chain as a TV sees
 it (multicast M-SEARCH → description → Browse → playing the item URL), and that
 admin endpoints and scripted sources are refused.
 
-Verified on 9 October 2026:
+Verified on 9 and 10 October 2026:
 
 | Where | Result |
 |---|---|
 | Real X2D (fw 01.02.00.00) + Ubuntu 24.04 home server, two NICs | smoke test 19/19 with radio on; DLNA visible on both interfaces |
+| Same network: router with IGMP snooping and no IGMP querier | hosts stop receiving SSDP about 4 minutes after joining; with the per-minute re-join the server kept receiving and answered every search for 11 minutes |
 | Samsung QE77S93C (Tizen) | discovered the DLNA server, fetched its icon and thumbnail, played the MPEG-TS item |
 | Debian 12 systemd container (arm64) | install, reinstall, migration from the former Gerbera add-on, DLNA on/off, radio on/off, uninstall, purge; smoke test green |
 | Chrome, 1920×1080 | MSE live; fallback MSE → HLS → MJPEG; printer off → hint → recovery; sound on/off |
