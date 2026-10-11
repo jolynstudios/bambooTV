@@ -109,7 +109,8 @@ FONT_CANDIDATES = (    # first existing bold sans wins; empty = no overlay
 
 def card_fields(data):
     """status.json -> contents for the card's text files; empty state = show nothing."""
-    empty = {"state": "", "name": "", "pct": "", "eta": "", "bar": "", "temps": ""}
+    empty = {"state": "", "name": "", "pct": "", "eta": "", "bar": "", "temps": "",
+             "line": ""}  # every CARD_FILES key: write_card indexes them all
     if not isinstance(data, dict) or data.get("feed") != "live":
         return empty
     job, temps = data.get("job") or {}, data.get("temps") or {}
@@ -157,7 +158,9 @@ def write_card(fields):
     for key in CARD_FILES:
         target = STATUS_TEXT if key == "line" else os.path.join(STATUS_DIR, "card-%s.txt" % key)
         try:
-            with open(target + ".tmp", "w") as f:
+            # drawtext's textfile is read as raw bytes; UTF-8 on purpose, so a
+            # C/POSIX server locale cannot break on °, · or the bar blocks.
+            with open(target + ".tmp", "w", encoding="utf-8") as f:
                 f.write(fields[key])
             os.replace(target + ".tmp", target)
         except OSError as err:
@@ -171,26 +174,36 @@ write_card.warned = False
 
 def poll_overlay():
     """Keep the card text fresh while (and only while) someone watches."""
+    # This thread must never die: it is a daemon, so an uncaught exception
+    # would leave the service "active" while every TV watches without the
+    # status card, silently, until someone restarts the unit.
+    warned = False
     while True:
-        with VIEWERS_LOCK:
-            watching = VIEWERS[0] > 0
-        if not watching:
-            time.sleep(1)
-            continue
-        fields = card_fields({})
         try:
-            with urllib.request.urlopen("http://127.0.0.1:%d/status.json" % STATUS_PORT, timeout=3) as r:
-                if r.status == 200:
-                    fields = card_fields(json.loads(r.read().decode("utf-8", "replace")))
-        except Exception:
+            with VIEWERS_LOCK:
+                watching = VIEWERS[0] > 0
+            if not watching:
+                time.sleep(1)
+                continue
             fields = card_fields({})
-        if STATUS_DIR:
             try:
-                os.makedirs(STATUS_DIR, exist_ok=True)
-            except OSError:
-                pass
-        write_card(fields)
-        time.sleep(3)
+                with urllib.request.urlopen("http://127.0.0.1:%d/status.json" % STATUS_PORT, timeout=3) as r:
+                    if r.status == 200:
+                        fields = card_fields(json.loads(r.read().decode("utf-8", "replace")))
+            except Exception:
+                fields = card_fields({})
+            if STATUS_DIR:
+                try:
+                    os.makedirs(STATUS_DIR, exist_ok=True)
+                except OSError:
+                    pass
+            write_card(fields)
+            time.sleep(3)
+        except Exception as err:
+            if not warned:  # e.g. a locale problem; keep serving what we have
+                log("overlay: poll failed (%s); will keep retrying" % err)
+                warned = True
+            time.sleep(3)
 
 
 def overlay_wanted():
